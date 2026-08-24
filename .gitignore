@@ -64,3 +64,6 @@ windsurf/
 agents/
 claude/
 windsurf/
+.agents/
+.claude/
+.windsurf/
