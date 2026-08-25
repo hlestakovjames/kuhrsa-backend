@@ -8,11 +8,6 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
-import { Permissions } from './decorators/permissions/permissions.decorator';
-import { Roles } from './decorators/roles/roles.decorator';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { PermissionsGuard } from './guards/permissions/permissions.guard';
-import { RolesGuard } from './guards/roles/roles.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -58,27 +53,6 @@ export class AuthController {
           name: userRole.role.name,
           code: userRole.role.code,
         })) ?? [],
-    };
-  }
-
-  @Get('admin-test')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('SUPER_ADMINISTRATOR')
-  async adminTest() {
-    return {
-      message: 'Super Administrator access confirmed.',
-    };
-  }
-
-  @Get('permission-test')
-  @UseGuards(
-    AuthGuard('jwt'),
-    PermissionsGuard,
-  )
-  @Permissions('users.view')
-  async permissionTest() {
-    return {
-      message: 'users.view permission confirmed.',
     };
   }
 }
