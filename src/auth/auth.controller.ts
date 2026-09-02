@@ -8,19 +8,25 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
+import { AuthenticatedRequest } from './types/authenticated-request';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
-  async login(@Body() body: { email: string; password: string }) {
-    return this.authService.login(body.email, body.password);
+  async login(@Body() dto: LoginDto) {
+    const identifier: string = dto.identifier;
+
+    const password: string = dto.password;
+
+    return this.authService.login(identifier, password);
   }
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
-  async getMe(@Request() req: any) {
+  getMe(@Request() req: AuthenticatedRequest) {
     const user = req.user;
 
     return {
@@ -42,13 +48,14 @@ export class AuthController {
       member: user.member
         ? {
             id: user.member.id,
+            registrationNumber: user.member.registrationNumber,
             memberNumber: user.member.memberNumber,
             status: user.member.status,
           }
         : null,
 
       roles:
-        user.userRoles?.map((userRole: any) => ({
+        user.userRoles?.map((userRole) => ({
           id: userRole.role.id,
           name: userRole.role.name,
           code: userRole.role.code,

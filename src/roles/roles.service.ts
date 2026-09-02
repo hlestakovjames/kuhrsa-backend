@@ -117,9 +117,7 @@ export class RolesService {
     });
 
     if (existingRole) {
-      throw new ConflictException(
-        'A role with this code already exists.',
-      );
+      throw new ConflictException('A role with this code already exists.');
     }
 
     const role = await this.prisma.$transaction(async (tx) => {
@@ -189,9 +187,7 @@ export class RolesService {
           id,
         },
         data: {
-          ...(dto.name !== undefined
-            ? { name: dto.name.trim() }
-            : {}),
+          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
           ...(dto.description !== undefined
             ? { description: dto.description.trim() }
             : {}),
@@ -263,9 +259,7 @@ export class RolesService {
     });
 
     if (existingAssignment) {
-      throw new ConflictException(
-        'This user already has this role.',
-      );
+      throw new ConflictException('This user already has this role.');
     }
 
     await this.prisma.$transaction(async (tx) => {

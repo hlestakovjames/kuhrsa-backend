@@ -9,6 +9,36 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
+interface SafeUserRecord {
+  id: string;
+  organizationId: string;
+  email: string;
+  status: string;
+  isSystemOwner: boolean;
+  lastLoginAt?: Date | null;
+
+  organization?: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
+
+  member?: {
+    id: string;
+    registrationNumber?: string | null;
+    memberNumber: string;
+    status: string;
+  } | null;
+
+  userRoles?: Array<{
+    role: {
+      id: string;
+      name: string;
+      code: string;
+    };
+  }>;
+}
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -17,6 +47,33 @@ export class UsersService {
     return this.prisma.user.findUnique({
       where: {
         email: email.toLowerCase().trim(),
+      },
+      include: {
+        organization: true,
+        member: true,
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                rolePermissions: {
+                  include: {
+                    permission: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async findByRegistrationNumber(registrationNumber: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        member: {
+          registrationNumber: registrationNumber.trim(),
+        },
       },
       include: {
         organization: true,
@@ -134,9 +191,7 @@ export class UsersService {
     });
 
     if (existingUser) {
-      throw new ConflictException(
-        'A user with this email already exists.',
-      );
+      throw new ConflictException('A user with this email already exists.');
     }
 
     const memberRole = await this.prisma.role.findUnique({
@@ -149,9 +204,7 @@ export class UsersService {
     });
 
     if (!memberRole) {
-      throw new NotFoundException(
-        'Default MEMBER role is not configured.',
-      );
+      throw new NotFoundException('Default MEMBER role is not configured.');
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -237,9 +290,7 @@ export class UsersService {
       });
 
       if (emailOwner && emailOwner.id !== id) {
-        throw new ConflictException(
-          'A user with this email already exists.',
-        );
+        throw new ConflictException('A user with this email already exists.');
       }
     }
 
@@ -255,9 +306,7 @@ export class UsersService {
         },
         data: {
           ...(email !== undefined ? { email } : {}),
-          ...(dto.status !== undefined
-            ? { status: dto.status }
-            : {}),
+          ...(dto.status !== undefined ? { status: dto.status } : {}),
         },
       });
 
@@ -282,14 +331,14 @@ export class UsersService {
     return this.findOne(updatedUser.id, organizationId);
   }
 
-  private toSafeUser(user: any) {
+  private toSafeUser(user: SafeUserRecord) {
     return {
       id: user.id,
       organizationId: user.organizationId,
       email: user.email,
       status: user.status,
       isSystemOwner: user.isSystemOwner,
-      lastLoginAt: user.lastLoginAt,
+      lastLoginAt: user.lastLoginAt ?? null,
 
       organization: user.organization
         ? {
@@ -302,13 +351,14 @@ export class UsersService {
       member: user.member
         ? {
             id: user.member.id,
+            registrationNumber: user.member.registrationNumber ?? null,
             memberNumber: user.member.memberNumber,
             status: user.member.status,
           }
         : null,
 
       roles:
-        user.userRoles?.map((userRole: any) => ({
+        user.userRoles?.map((userRole) => ({
           id: userRole.role.id,
           name: userRole.role.name,
           code: userRole.role.code,

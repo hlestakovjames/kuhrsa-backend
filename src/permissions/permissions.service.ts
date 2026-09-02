@@ -24,10 +24,7 @@ export class PermissionsService {
     });
   }
 
-  async findRolePermissions(
-    roleId: string,
-    organizationId: string,
-  ) {
+  async findRolePermissions(roleId: string, organizationId: string) {
     const role = await this.prisma.role.findFirst({
       where: {
         id: roleId,
@@ -39,20 +36,19 @@ export class PermissionsService {
       throw new NotFoundException('Role not found.');
     }
 
-    const rolePermissions =
-      await this.prisma.rolePermission.findMany({
-        where: {
-          roleId,
+    const rolePermissions = await this.prisma.rolePermission.findMany({
+      where: {
+        roleId,
+      },
+      include: {
+        permission: true,
+      },
+      orderBy: {
+        permission: {
+          code: 'asc',
         },
-        include: {
-          permission: true,
-        },
-        orderBy: {
-          permission: {
-            code: 'asc',
-          },
-        },
-      });
+      },
+    });
 
     return rolePermissions.map((item) => ({
       id: item.permission.id,
@@ -96,15 +92,14 @@ export class PermissionsService {
       throw new NotFoundException('Permission not found.');
     }
 
-    const existing =
-      await this.prisma.rolePermission.findUnique({
-        where: {
-          roleId_permissionId: {
-            roleId,
-            permissionId,
-          },
+    const existing = await this.prisma.rolePermission.findUnique({
+      where: {
+        roleId_permissionId: {
+          roleId,
+          permissionId,
         },
-      });
+      },
+    });
 
     if (existing) {
       throw new ConflictException(
@@ -113,13 +108,12 @@ export class PermissionsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const rolePermission =
-        await tx.rolePermission.create({
-          data: {
-            roleId,
-            permissionId,
-          },
-        });
+      const rolePermission = await tx.rolePermission.create({
+        data: {
+          roleId,
+          permissionId,
+        },
+      });
 
       await tx.auditLog.create({
         data: {
@@ -164,26 +158,24 @@ export class PermissionsService {
       );
     }
 
-    const permission =
-      await this.prisma.permission.findUnique({
-        where: {
-          id: permissionId,
-        },
-      });
+    const permission = await this.prisma.permission.findUnique({
+      where: {
+        id: permissionId,
+      },
+    });
 
     if (!permission) {
       throw new NotFoundException('Permission not found.');
     }
 
-    const assignment =
-      await this.prisma.rolePermission.findUnique({
-        where: {
-          roleId_permissionId: {
-            roleId,
-            permissionId,
-          },
+    const assignment = await this.prisma.rolePermission.findUnique({
+      where: {
+        roleId_permissionId: {
+          roleId,
+          permissionId,
         },
-      });
+      },
+    });
 
     if (!assignment) {
       throw new NotFoundException(

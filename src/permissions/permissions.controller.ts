@@ -10,14 +10,13 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
+import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { PermissionsService } from './permissions.service';
 
 @Controller('permissions')
 @UseGuards(AuthGuard('jwt'))
 export class PermissionsController {
-  constructor(
-    private readonly permissionsService: PermissionsService,
-  ) {}
+  constructor(private readonly permissionsService: PermissionsService) {}
 
   @Get()
   @UseGuards(PermissionsGuard)
@@ -31,7 +30,7 @@ export class PermissionsController {
   @Permissions('roles.view')
   async findRolePermissions(
     @Param('roleId') roleId: string,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.permissionsService.findRolePermissions(
       roleId,
@@ -45,7 +44,7 @@ export class PermissionsController {
   async assignPermission(
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.permissionsService.assignPermission(
       roleId,
@@ -61,7 +60,7 @@ export class PermissionsController {
   async removePermission(
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.permissionsService.removePermission(
       roleId,

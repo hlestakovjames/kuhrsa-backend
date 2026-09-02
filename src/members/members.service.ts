@@ -8,6 +8,29 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 
+interface SafeMemberRecord {
+  id: string;
+  organizationId: string;
+  registrationNumber?: string | null;
+  memberNumber: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+
+  organization?: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
+
+  user?: {
+    id: string;
+    email: string;
+    status: string;
+    isSystemOwner: boolean;
+  } | null;
+}
+
 @Injectable()
 export class MembersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -33,9 +56,7 @@ export class MembersService {
       },
     });
 
-    return members.map((member) =>
-      this.toSafeMember(member),
-    );
+    return members.map((member) => this.toSafeMember(member));
   }
 
   async findOne(id: string, organizationId: string) {
@@ -71,12 +92,11 @@ export class MembersService {
   ) {
     const memberNumber = dto.memberNumber.trim();
 
-    const existingMember =
-      await this.prisma.member.findUnique({
-        where: {
-          memberNumber,
-        },
-      });
+    const existingMember = await this.prisma.member.findUnique({
+      where: {
+        memberNumber,
+      },
+    });
 
     if (existingMember) {
       throw new ConflictException(
@@ -104,9 +124,7 @@ export class MembersService {
       });
 
       if (!user) {
-        throw new NotFoundException(
-          'No user exists with the supplied email.',
-        );
+        throw new NotFoundException('No user exists with the supplied email.');
       }
 
       if (user.member) {
@@ -118,44 +136,43 @@ export class MembersService {
       linkedUserId = user.id;
     }
 
-    const createdMember =
-      await this.prisma.$transaction(async (tx) => {
-        const member = await tx.member.create({
-          data: {
-            organizationId,
-            memberNumber,
-            userId: linkedUserId,
-          },
-          include: {
-            organization: true,
-            user: {
-              select: {
-                id: true,
-                email: true,
-                status: true,
-                isSystemOwner: true,
-              },
+    const createdMember = await this.prisma.$transaction(async (tx) => {
+      const member = await tx.member.create({
+        data: {
+          organizationId,
+          memberNumber,
+          userId: linkedUserId,
+        },
+        include: {
+          organization: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              status: true,
+              isSystemOwner: true,
             },
           },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            organizationId,
-            actorUserId,
-            action: 'CREATE',
-            entityType: 'Member',
-            entityId: member.id,
-            newValue: {
-              memberNumber: member.memberNumber,
-              status: member.status,
-              userId: member.userId,
-            },
-          },
-        });
-
-        return member;
+        },
       });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorUserId,
+          action: 'CREATE',
+          entityType: 'Member',
+          entityId: member.id,
+          newValue: {
+            memberNumber: member.memberNumber,
+            status: member.status,
+            userId: member.userId,
+          },
+        },
+      });
+
+      return member;
+    });
 
     return this.toSafeMember(createdMember);
   }
@@ -166,16 +183,15 @@ export class MembersService {
     actorUserId: string,
     dto: UpdateMemberDto,
   ) {
-    const existingMember =
-      await this.prisma.member.findFirst({
-        where: {
-          id,
-          organizationId,
-        },
-        include: {
-          user: true,
-        },
-      });
+    const existingMember = await this.prisma.member.findFirst({
+      where: {
+        id,
+        organizationId,
+      },
+      include: {
+        user: true,
+      },
+    });
 
     if (!existingMember) {
       throw new NotFoundException('Member not found.');
@@ -192,15 +208,12 @@ export class MembersService {
     if (dto.memberNumber !== undefined) {
       memberNumber = dto.memberNumber.trim();
 
-      if (
-        memberNumber !== existingMember.memberNumber
-      ) {
-        const duplicate =
-          await this.prisma.member.findUnique({
-            where: {
-              memberNumber,
-            },
-          });
+      if (memberNumber !== existingMember.memberNumber) {
+        const duplicate = await this.prisma.member.findUnique({
+          where: {
+            memberNumber,
+          },
+        });
 
         if (duplicate && duplicate.id !== id) {
           throw new ConflictException(
@@ -230,15 +243,10 @@ export class MembersService {
       });
 
       if (!user) {
-        throw new NotFoundException(
-          'No user exists with the supplied email.',
-        );
+        throw new NotFoundException('No user exists with the supplied email.');
       }
 
-      if (
-        user.member &&
-        user.member.id !== existingMember.id
-      ) {
+      if (user.member && user.member.id !== existingMember.id) {
         throw new ConflictException(
           'This user is already linked to another member record.',
         );
@@ -253,66 +261,61 @@ export class MembersService {
       userId: existingMember.userId,
     };
 
-    const updatedMember =
-      await this.prisma.$transaction(async (tx) => {
-        const data: {
-          memberNumber?: string;
-          userId?: string;
-        } = {};
+    const updatedMember = await this.prisma.$transaction(async (tx) => {
+      const data: {
+        memberNumber?: string;
+        userId?: string;
+      } = {};
 
-        if (memberNumber !== undefined) {
-          data.memberNumber = memberNumber;
-        }
+      if (memberNumber !== undefined) {
+        data.memberNumber = memberNumber;
+      }
 
-        if (newUserId !== undefined) {
-          data.userId = newUserId;
-        }
+      if (newUserId !== undefined) {
+        data.userId = newUserId;
+      }
 
-        const member = await tx.member.update({
-          where: {
-            id,
-          },
-          data,
-          include: {
-            organization: true,
-            user: {
-              select: {
-                id: true,
-                email: true,
-                status: true,
-                isSystemOwner: true,
-              },
+      const member = await tx.member.update({
+        where: {
+          id,
+        },
+        data,
+        include: {
+          organization: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              status: true,
+              isSystemOwner: true,
             },
           },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            organizationId,
-            actorUserId,
-            action: 'UPDATE',
-            entityType: 'Member',
-            entityId: member.id,
-            oldValue,
-            newValue: {
-              memberNumber: member.memberNumber,
-              status: member.status,
-              userId: member.userId,
-            },
-          },
-        });
-
-        return member;
+        },
       });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorUserId,
+          action: 'UPDATE',
+          entityType: 'Member',
+          entityId: member.id,
+          oldValue,
+          newValue: {
+            memberNumber: member.memberNumber,
+            status: member.status,
+            userId: member.userId,
+          },
+        },
+      });
+
+      return member;
+    });
 
     return this.toSafeMember(updatedMember);
   }
 
-  async approve(
-    id: string,
-    organizationId: string,
-    actorUserId: string,
-  ) {
+  async approve(id: string, organizationId: string, actorUserId: string) {
     return this.changeStatus(
       id,
       organizationId,
@@ -322,11 +325,7 @@ export class MembersService {
     );
   }
 
-  async activate(
-    id: string,
-    organizationId: string,
-    actorUserId: string,
-  ) {
+  async activate(id: string, organizationId: string, actorUserId: string) {
     return this.changeStatus(
       id,
       organizationId,
@@ -336,11 +335,7 @@ export class MembersService {
     );
   }
 
-  async suspend(
-    id: string,
-    organizationId: string,
-    actorUserId: string,
-  ) {
+  async suspend(id: string, organizationId: string, actorUserId: string) {
     return this.changeStatus(
       id,
       organizationId,
@@ -357,16 +352,15 @@ export class MembersService {
     status: 'ACTIVE' | 'SUSPENDED',
     action: 'APPROVE' | 'ACTIVATE' | 'SUSPEND',
   ) {
-    const existingMember =
-      await this.prisma.member.findFirst({
-        where: {
-          id,
-          organizationId,
-        },
-        include: {
-          user: true,
-        },
-      });
+    const existingMember = await this.prisma.member.findFirst({
+      where: {
+        id,
+        organizationId,
+      },
+      include: {
+        user: true,
+      },
+    });
 
     if (!existingMember) {
       throw new NotFoundException('Member not found.');
@@ -380,63 +374,58 @@ export class MembersService {
 
     const oldStatus = existingMember.status;
 
-    if (
-      action === 'APPROVE' &&
-      oldStatus !== 'PENDING'
-    ) {
-      throw new ConflictException(
-        'Only pending members can be approved.',
-      );
+    if (action === 'APPROVE' && oldStatus !== 'PENDING') {
+      throw new ConflictException('Only pending members can be approved.');
     }
 
-    const updatedMember =
-      await this.prisma.$transaction(async (tx) => {
-        const member = await tx.member.update({
-          where: {
-            id,
-          },
-          data: {
-            status,
-          },
-          include: {
-            organization: true,
-            user: {
-              select: {
-                id: true,
-                email: true,
-                status: true,
-                isSystemOwner: true,
-              },
+    const updatedMember = await this.prisma.$transaction(async (tx) => {
+      const member = await tx.member.update({
+        where: {
+          id,
+        },
+        data: {
+          status,
+        },
+        include: {
+          organization: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              status: true,
+              isSystemOwner: true,
             },
           },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            organizationId,
-            actorUserId,
-            action,
-            entityType: 'Member',
-            entityId: member.id,
-            oldValue: {
-              status: oldStatus,
-            },
-            newValue: {
-              status: member.status,
-            },
-          },
-        });
-
-        return member;
+        },
       });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorUserId,
+          action,
+          entityType: 'Member',
+          entityId: member.id,
+          oldValue: {
+            status: oldStatus,
+          },
+          newValue: {
+            status: member.status,
+          },
+        },
+      });
+
+      return member;
+    });
 
     return this.toSafeMember(updatedMember);
   }
 
-  private toSafeMember(member: any) {
+  private toSafeMember(member: SafeMemberRecord) {
     return {
       id: member.id,
       organizationId: member.organizationId,
+      registrationNumber: member.registrationNumber ?? null,
       memberNumber: member.memberNumber,
       status: member.status,
       createdAt: member.createdAt,

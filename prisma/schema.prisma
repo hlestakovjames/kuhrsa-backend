@@ -64,8 +64,8 @@ model User {
   isSystemOwner Boolean @default(false)
 
   lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
   member       Member?
@@ -81,8 +81,9 @@ model Member {
   organizationId String
   userId         String? @unique
 
-  memberNumber String       @unique
-  status       MemberStatus @default(PENDING)
+  registrationNumber String?      @unique
+  memberNumber       String       @unique
+  status             MemberStatus @default(PENDING)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -98,10 +99,9 @@ model Role {
   id             String @id @default(uuid())
   organizationId String
 
-  name        String
-  code        String
-  description String?
-
+  name         String
+  code         String
+  description  String?
   isSystemRole Boolean @default(false)
 
   createdAt DateTime @default(now())
@@ -116,10 +116,9 @@ model Role {
 }
 
 model Permission {
-  id String @id @default(uuid())
-
+  id          String @id @default(uuid())
   name        String
-  code        String  @unique
+  code        String @unique
   description String?
 
   createdAt DateTime @default(now())
@@ -129,10 +128,9 @@ model Permission {
 }
 
 model UserRole {
-  id     String @id @default(uuid())
-  userId String
-  roleId String
-
+  id         String   @id @default(uuid())
+  userId     String
+  roleId     String
   assignedAt DateTime @default(now())
   assignedBy String?
 
@@ -145,11 +143,10 @@ model UserRole {
 }
 
 model RolePermission {
-  id           String @id @default(uuid())
+  id           String   @id @default(uuid())
   roleId       String
   permissionId String
-
-  grantedAt DateTime @default(now())
+  grantedAt    DateTime @default(now())
 
   role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
@@ -160,22 +157,18 @@ model RolePermission {
 }
 
 model AuditLog {
-  id             String  @id @default(uuid())
+  id             String      @id @default(uuid())
   organizationId String
   actorUserId    String?
-
-  action     AuditAction
-  entityType String
-  entityId   String?
-
-  oldValue Json?
-  newValue Json?
-  reason   String?
-
-  ipAddress String?
-  userAgent String?
-
-  createdAt DateTime @default(now())
+  action         AuditAction
+  entityType     String
+  entityId       String?
+  oldValue       Json?
+  newValue       Json?
+  reason         String?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
   actor        User?        @relation("AuditActor", fields: [actorUserId], references: [id])

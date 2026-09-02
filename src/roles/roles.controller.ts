@@ -12,6 +12,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
+import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RolesService } from './roles.service';
@@ -24,23 +25,15 @@ export class RolesController {
   @Get()
   @UseGuards(PermissionsGuard)
   @Permissions('roles.view')
-  async findAll(@Request() req: any) {
-    return this.rolesService.findAll(
-      req.user.organizationId,
-    );
+  async findAll(@Request() req: AuthenticatedRequest) {
+    return this.rolesService.findAll(req.user.organizationId);
   }
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
   @Permissions('roles.view')
-  async findOne(
-    @Param('id') id: string,
-    @Request() req: any,
-  ) {
-    return this.rolesService.findOne(
-      id,
-      req.user.organizationId,
-    );
+  async findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.rolesService.findOne(id, req.user.organizationId);
   }
 
   @Post()
@@ -48,13 +41,9 @@ export class RolesController {
   @Permissions('roles.manage')
   async create(
     @Body() dto: CreateRoleDto,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
-    return this.rolesService.create(
-      req.user.organizationId,
-      req.user.id,
-      dto,
-    );
+    return this.rolesService.create(req.user.organizationId, req.user.id, dto);
   }
 
   @Patch(':id')
@@ -63,7 +52,7 @@ export class RolesController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateRoleDto,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.rolesService.update(
       id,
@@ -79,7 +68,7 @@ export class RolesController {
   async assignUser(
     @Param('id') roleId: string,
     @Param('userId') userId: string,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.rolesService.assignUser(
       roleId,
@@ -95,7 +84,7 @@ export class RolesController {
   async removeUser(
     @Param('id') roleId: string,
     @Param('userId') userId: string,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.rolesService.removeUser(
       roleId,
