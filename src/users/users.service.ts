@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -44,6 +45,8 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByEmail(email: string) {
+    const now = new Date();
+
     return this.prisma.user.findUnique({
       where: {
         email: email.toLowerCase().trim(),
@@ -52,6 +55,7 @@ export class UsersService {
         organization: true,
         member: true,
         userRoles: {
+          where: this.activeUserRoleWhere(now),
           include: {
             role: {
               include: {
@@ -69,6 +73,8 @@ export class UsersService {
   }
 
   async findByRegistrationNumber(registrationNumber: string) {
+    const now = new Date();
+
     return this.prisma.user.findFirst({
       where: {
         member: {
@@ -79,6 +85,7 @@ export class UsersService {
         organization: true,
         member: true,
         userRoles: {
+          where: this.activeUserRoleWhere(now),
           include: {
             role: {
               include: {
@@ -96,6 +103,8 @@ export class UsersService {
   }
 
   async findById(id: string) {
+    const now = new Date();
+
     return this.prisma.user.findUnique({
       where: {
         id,
@@ -104,6 +113,7 @@ export class UsersService {
         organization: true,
         member: true,
         userRoles: {
+          where: this.activeUserRoleWhere(now),
           include: {
             role: {
               include: {
@@ -132,6 +142,8 @@ export class UsersService {
   }
 
   async findAll(organizationId: string) {
+    const now = new Date();
+
     const users = await this.prisma.user.findMany({
       where: {
         organizationId,
@@ -143,6 +155,7 @@ export class UsersService {
         organization: true,
         member: true,
         userRoles: {
+          where: this.activeUserRoleWhere(now),
           include: {
             role: true,
           },
@@ -154,6 +167,8 @@ export class UsersService {
   }
 
   async findOne(id: string, organizationId: string) {
+    const now = new Date();
+
     const user = await this.prisma.user.findFirst({
       where: {
         id,
@@ -163,6 +178,7 @@ export class UsersService {
         organization: true,
         member: true,
         userRoles: {
+          where: this.activeUserRoleWhere(now),
           include: {
             role: true,
           },
@@ -306,7 +322,11 @@ export class UsersService {
         },
         data: {
           ...(email !== undefined ? { email } : {}),
-          ...(dto.status !== undefined ? { status: dto.status } : {}),
+          ...(dto.status !== undefined
+            ? {
+                status: dto.status,
+              }
+            : {}),
         },
       });
 
@@ -329,6 +349,25 @@ export class UsersService {
     });
 
     return this.findOne(updatedUser.id, organizationId);
+  }
+
+  private activeUserRoleWhere(now: Date) {
+    return {
+      revokedAt: null,
+      startsAt: {
+        lte: now,
+      },
+      OR: [
+        {
+          endsAt: null,
+        },
+        {
+          endsAt: {
+            gt: now,
+          },
+        },
+      ],
+    } satisfies Prisma.UserRoleWhereInput;
   }
 
   private toSafeUser(user: SafeUserRecord) {

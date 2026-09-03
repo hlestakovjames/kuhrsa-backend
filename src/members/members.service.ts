@@ -4,13 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { MemberCategory, Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
+import { MemberNumberService } from './member-number.service';
 
 interface SafeMemberRecord {
   id: string;
   organizationId: string;
+  category: MemberCategory;
   registrationNumber?: string | null;
   memberNumber: string;
   status: string;
@@ -33,7 +36,10 @@ interface SafeMemberRecord {
 
 @Injectable()
 export class MembersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly memberNumberService: MemberNumberService,
+  ) {}
 
   async findAll(organizationId: string) {
     const members = await this.prisma.member.findMany({
@@ -90,18 +96,21 @@ export class MembersService {
     actorUserId: string,
     dto: CreateMemberDto,
   ) {
-    const memberNumber = dto.memberNumber.trim();
+    const category = dto.category;
+    const registrationNumber = dto.registrationNumber?.trim() || undefined;
 
-    const existingMember = await this.prisma.member.findUnique({
-      where: {
-        memberNumber,
-      },
-    });
+    if (registrationNumber) {
+      const existingRegistration = await this.prisma.member.findUnique({
+        where: {
+          registrationNumber,
+        },
+      });
 
-    if (existingMember) {
-      throw new ConflictException(
-        'A member with this member number already exists.',
-      );
+      if (existingRegistration) {
+        throw new ConflictException(
+          'A member with this registration number already exists.',
+        );
+      }
     }
 
     let linkedUserId: string | undefined;
@@ -136,43 +145,54 @@ export class MembersService {
       linkedUserId = user.id;
     }
 
-    const createdMember = await this.prisma.$transaction(async (tx) => {
-      const member = await tx.member.create({
-        data: {
-          organizationId,
-          memberNumber,
-          userId: linkedUserId,
-        },
-        include: {
-          organization: true,
-          user: {
-            select: {
-              id: true,
-              email: true,
-              status: true,
-              isSystemOwner: true,
+    const createdMember = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const memberNumber = await this.memberNumberService.generate(
+          category,
+          tx,
+        );
+
+        const member = await tx.member.create({
+          data: {
+            organizationId,
+            category,
+            registrationNumber,
+            memberNumber,
+            userId: linkedUserId,
+          },
+          include: {
+            organization: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                status: true,
+                isSystemOwner: true,
+              },
             },
           },
-        },
-      });
+        });
 
-      await tx.auditLog.create({
-        data: {
-          organizationId,
-          actorUserId,
-          action: 'CREATE',
-          entityType: 'Member',
-          entityId: member.id,
-          newValue: {
-            memberNumber: member.memberNumber,
-            status: member.status,
-            userId: member.userId,
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            actorUserId,
+            action: 'CREATE',
+            entityType: 'Member',
+            entityId: member.id,
+            newValue: {
+              category: member.category,
+              registrationNumber: member.registrationNumber,
+              memberNumber: member.memberNumber,
+              status: member.status,
+              userId: member.userId,
+            },
           },
-        },
-      });
+        });
 
-      return member;
-    });
+        return member;
+      },
+    );
 
     return this.toSafeMember(createdMember);
   }
@@ -203,21 +223,21 @@ export class MembersService {
       );
     }
 
-    let memberNumber: string | undefined;
+    let registrationNumber: string | undefined;
 
-    if (dto.memberNumber !== undefined) {
-      memberNumber = dto.memberNumber.trim();
+    if (dto.registrationNumber !== undefined) {
+      registrationNumber = dto.registrationNumber.trim();
 
-      if (memberNumber !== existingMember.memberNumber) {
+      if (registrationNumber !== existingMember.registrationNumber) {
         const duplicate = await this.prisma.member.findUnique({
           where: {
-            memberNumber,
+            registrationNumber,
           },
         });
 
         if (duplicate && duplicate.id !== id) {
           throw new ConflictException(
-            'A member with this member number already exists.',
+            'A member with this registration number already exists.',
           );
         }
       }
@@ -256,6 +276,8 @@ export class MembersService {
     }
 
     const oldValue = {
+      category: existingMember.category,
+      registrationNumber: existingMember.registrationNumber,
       memberNumber: existingMember.memberNumber,
       status: existingMember.status,
       userId: existingMember.userId,
@@ -263,12 +285,12 @@ export class MembersService {
 
     const updatedMember = await this.prisma.$transaction(async (tx) => {
       const data: {
-        memberNumber?: string;
+        registrationNumber?: string;
         userId?: string;
       } = {};
 
-      if (memberNumber !== undefined) {
-        data.memberNumber = memberNumber;
+      if (registrationNumber !== undefined) {
+        data.registrationNumber = registrationNumber;
       }
 
       if (newUserId !== undefined) {
@@ -302,6 +324,8 @@ export class MembersService {
           entityId: member.id,
           oldValue,
           newValue: {
+            category: member.category,
+            registrationNumber: member.registrationNumber,
             memberNumber: member.memberNumber,
             status: member.status,
             userId: member.userId,
@@ -407,9 +431,13 @@ export class MembersService {
           entityType: 'Member',
           entityId: member.id,
           oldValue: {
+            category: member.category,
+            memberNumber: member.memberNumber,
             status: oldStatus,
           },
           newValue: {
+            category: member.category,
+            memberNumber: member.memberNumber,
             status: member.status,
           },
         },
@@ -425,6 +453,7 @@ export class MembersService {
     return {
       id: member.id,
       organizationId: member.organizationId,
+      category: member.category,
       registrationNumber: member.registrationNumber ?? null,
       memberNumber: member.memberNumber,
       status: member.status,

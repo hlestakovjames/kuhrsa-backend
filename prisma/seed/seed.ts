@@ -64,6 +64,12 @@ const roles = [
   },
 ];
 
+const memberCategories = [
+  'STUDENT',
+  'ALUMNI',
+  'LECTURER',
+] as const;
+
 async function main() {
   console.log('Starting KUHRSA database bootstrap...');
 
@@ -92,7 +98,23 @@ async function main() {
 
   console.log(`Organization ready: ${organization.name}`);
 
-  // 2. Permissions
+  // 2. Member number sequences
+  for (const category of memberCategories) {
+    await prisma.memberNumberSequence.upsert({
+      where: {
+        category,
+      },
+      update: {},
+      create: {
+        category,
+        currentNumber: 0,
+      },
+    });
+  }
+
+  console.log('Member number sequences ready.');
+
+  // 3. Permissions
   const permissionRecords = new Map<
     string,
     { id: string; code: string }
@@ -123,7 +145,7 @@ async function main() {
 
   console.log(`Permissions ready: ${permissionRecords.size}`);
 
-  // 3. System Roles
+  // 4. System Roles
   const roleRecords = new Map<
     string,
     { id: string; code: string }
@@ -156,7 +178,7 @@ async function main() {
 
   console.log(`System roles ready: ${roleRecords.size}`);
 
-  // 4. Super Administrator gets all permissions
+  // 5. Super Administrator gets all permissions
   const superAdmin = roleRecords.get('SUPER_ADMINISTRATOR');
 
   if (!superAdmin) {
@@ -181,7 +203,7 @@ async function main() {
 
   console.log('Super Administrator permissions assigned.');
 
-  // 5. Administrator permissions
+  // 6. Administrator permissions
   const administrator = roleRecords.get('ADMINISTRATOR');
 
   if (!administrator) {
@@ -232,12 +254,12 @@ async function main() {
 
   console.log('Administrator permissions assigned.');
 
-  // 6. Create or update protected System Owner
+  // 7. Create or update protected System Owner
   const passwordHash = await bcrypt.hash(ownerPassword, 12);
 
   const owner = await prisma.user.upsert({
     where: {
-      email: ownerEmail,
+      email: ownerEmail.toLowerCase().trim(),
     },
     update: {
       organizationId: organization.id,
@@ -247,7 +269,7 @@ async function main() {
     },
     create: {
       organizationId: organization.id,
-      email: ownerEmail,
+      email: ownerEmail.toLowerCase().trim(),
       passwordHash,
       status: 'ACTIVE',
       isSystemOwner: true,
@@ -256,7 +278,7 @@ async function main() {
 
   console.log(`System Owner ready: ${owner.email}`);
 
-  // 7. Assign Super Administrator role to System Owner
+  // 8. Assign Super Administrator role to System Owner
   await prisma.userRole.upsert({
     where: {
       userId_roleId: {

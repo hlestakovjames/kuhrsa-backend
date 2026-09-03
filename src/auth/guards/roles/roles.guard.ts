@@ -27,7 +27,7 @@ export class RolesGuard implements CanActivate {
     const user = request.user;
 
     if (!user) {
-      throw new ForbiddenException('User not authenticated');
+      throw new ForbiddenException('User not authenticated.');
     }
 
     if (user.isSystemOwner) {
@@ -43,7 +43,7 @@ export class RolesGuard implements CanActivate {
 
     if (!hasRequiredRole) {
       throw new ForbiddenException(
-        'You do not have permission to access this resource',
+        'You do not have permission to access this resource.',
       );
     }
 

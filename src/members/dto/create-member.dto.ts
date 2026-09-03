@@ -1,9 +1,20 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
+import { MemberCategory } from '../../../generated/prisma/client';
 
 export class CreateMemberDto {
+  @IsEnum(MemberCategory)
+  category!: MemberCategory;
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  memberNumber!: string;
+  registrationNumber?: string;
 
   @IsOptional()
   @IsEmail()

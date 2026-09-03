@@ -27,7 +27,7 @@ export class PermissionsGuard implements CanActivate {
     const user = request.user;
 
     if (!user) {
-      throw new ForbiddenException('User not authenticated');
+      throw new ForbiddenException('User not authenticated.');
     }
 
     if (user.isSystemOwner) {
@@ -52,7 +52,7 @@ export class PermissionsGuard implements CanActivate {
 
     if (!hasRequiredPermissions) {
       throw new ForbiddenException(
-        'You do not have the required permissions to access this resource',
+        'You do not have the required permissions to access this resource.',
       );
     }
 

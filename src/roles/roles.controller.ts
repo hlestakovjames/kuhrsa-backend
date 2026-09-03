@@ -13,6 +13,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { AssignUserRoleDto } from './dto/assign-user-role.dto';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RolesService } from './roles.service';
@@ -68,6 +69,7 @@ export class RolesController {
   async assignUser(
     @Param('id') roleId: string,
     @Param('userId') userId: string,
+    @Body() dto: AssignUserRoleDto,
     @Request() req: AuthenticatedRequest,
   ) {
     return this.rolesService.assignUser(
@@ -75,6 +77,8 @@ export class RolesController {
       userId,
       req.user.organizationId,
       req.user.id,
+      dto.startsAt,
+      dto.endsAt,
     );
   }
 

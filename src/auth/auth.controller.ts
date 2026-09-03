@@ -26,8 +26,16 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
-  getMe(@Request() req: AuthenticatedRequest) {
+  getMe(
+    @Request()
+    req: AuthenticatedRequest,
+  ) {
     const user = req.user;
+
+    const roleCodes =
+      user.userRoles?.map((userRole) => userRole.role.code) ?? [];
+
+    const dashboards = this.getDashboards(user.isSystemOwner, roleCodes);
 
     return {
       id: user.id,
@@ -60,6 +68,33 @@ export class AuthController {
           name: userRole.role.name,
           code: userRole.role.code,
         })) ?? [],
+
+      dashboards,
     };
+  }
+
+  private getDashboards(isSystemOwner: boolean, roles: string[]) {
+    if (isSystemOwner) {
+      return ['member', 'executive', 'administration'];
+    }
+
+    const dashboards = new Set<string>();
+
+    if (roles.includes('MEMBER')) {
+      dashboards.add('member');
+    }
+
+    if (roles.includes('EXECUTIVE')) {
+      dashboards.add('executive');
+    }
+
+    if (
+      roles.includes('ADMINISTRATOR') ||
+      roles.includes('SUPER_ADMINISTRATOR')
+    ) {
+      dashboards.add('administration');
+    }
+
+    return Array.from(dashboards);
   }
 }

@@ -4,7 +4,7 @@ export class UpdateMemberDto {
   @IsOptional()
   @IsString()
   @MinLength(2)
-  memberNumber?: string;
+  registrationNumber?: string;
 
   @IsOptional()
   @IsEmail()
