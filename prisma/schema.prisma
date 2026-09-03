@@ -28,6 +28,19 @@ enum MemberStatus {
   ARCHIVED
 }
 
+enum MemberSource {
+  REGISTRATION
+  MIGRATION_IMPORT
+  MIGRATION_MANUAL
+}
+
+enum MemberActivationStatus {
+  NOT_REQUIRED
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
 enum MembershipPeriodStatus {
   PENDING
   ACTIVE
@@ -105,15 +118,37 @@ model Member {
   memberNumber       String         @unique
   status             MemberStatus   @default(PENDING)
 
+  source           MemberSource           @default(REGISTRATION)
+  activationStatus MemberActivationStatus @default(NOT_REQUIRED)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization      Organization      @relation(fields: [organizationId], references: [id])
-  user              User?             @relation(fields: [userId], references: [id])
+  organization      Organization       @relation(fields: [organizationId], references: [id])
+  user              User?              @relation(fields: [userId], references: [id])
   membershipPeriods MembershipPeriod[]
+  activation        MemberActivation?
 
   @@index([organizationId])
   @@index([status])
+  @@index([source])
+  @@index([activationStatus])
+}
+
+model MemberActivation {
+  id       String @id @default(uuid())
+  memberId String @unique
+
+  tokenHash   String
+  expiresAt   DateTime
+  usedAt      DateTime?
+  lastSentAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
 }
 
 model MemberNumberSequence {

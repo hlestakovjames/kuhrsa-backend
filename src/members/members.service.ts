@@ -4,7 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { MemberCategory, Prisma } from '../../generated/prisma/client';
+import {
+  MemberActivationStatus,
+  MemberCategory,
+  MemberSource,
+  Prisma,
+  UserStatus,
+} from '../../generated/prisma/client';
+import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
@@ -17,6 +25,8 @@ interface SafeMemberRecord {
   registrationNumber?: string | null;
   memberNumber: string;
   status: string;
+  source: MemberSource;
+  activationStatus: MemberActivationStatus;
   createdAt: Date;
   updatedAt: Date;
 
@@ -95,9 +105,15 @@ export class MembersService {
     organizationId: string,
     actorUserId: string,
     dto: CreateMemberDto,
+    sourceOverride?: MemberSource,
   ) {
     const category = dto.category;
+
     const registrationNumber = dto.registrationNumber?.trim() || undefined;
+
+    const email = dto.email.toLowerCase().trim();
+
+    const source = sourceOverride ?? dto.source ?? MemberSource.REGISTRATION;
 
     if (registrationNumber) {
       const existingRegistration = await this.prisma.member.findUnique({
@@ -113,36 +129,32 @@ export class MembersService {
       }
     }
 
-    let linkedUserId: string | undefined;
-
-    if (dto.email) {
-      const email = dto.email.toLowerCase().trim();
-
-      const user = await this.prisma.user.findUnique({
-        where: {
-          email,
-        },
-        select: {
-          id: true,
-          member: {
-            select: {
-              id: true,
-            },
+    const existingUser = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        email: true,
+        member: {
+          select: {
+            id: true,
           },
         },
-      });
+      },
+    });
 
-      if (!user) {
-        throw new NotFoundException('No user exists with the supplied email.');
-      }
+    if (existingUser && existingUser.organizationId !== organizationId) {
+      throw new ConflictException(
+        'The supplied email belongs to a user in another organization.',
+      );
+    }
 
-      if (user.member) {
-        throw new ConflictException(
-          'This user is already linked to a member record.',
-        );
-      }
-
-      linkedUserId = user.id;
+    if (existingUser?.member) {
+      throw new ConflictException(
+        'This user is already linked to a member record.',
+      );
     }
 
     const createdMember = await this.prisma.$transaction(
@@ -152,16 +164,64 @@ export class MembersService {
           tx,
         );
 
+        let userId = existingUser?.id;
+
+        if (!userId) {
+          const temporaryPassword = randomBytes(32).toString('hex');
+
+          const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+
+          const user = await tx.user.create({
+            data: {
+              organizationId,
+
+              firstName: dto.firstName.trim(),
+
+              lastName: dto.lastName.trim(),
+
+              email,
+
+              passwordHash,
+
+              status:
+                source === MemberSource.REGISTRATION
+                  ? UserStatus.ACTIVE
+                  : UserStatus.INACTIVE,
+            },
+          });
+
+          userId = user.id;
+        } else {
+          await tx.user.update({
+            where: {
+              id: userId,
+            },
+            data: {
+              firstName: dto.firstName.trim(),
+
+              lastName: dto.lastName.trim(),
+            },
+          });
+        }
+
         const member = await tx.member.create({
           data: {
             organizationId,
             category,
             registrationNumber,
             memberNumber,
-            userId: linkedUserId,
+            userId,
+            source,
+
+            activationStatus:
+              source === MemberSource.REGISTRATION
+                ? MemberActivationStatus.NOT_REQUIRED
+                : MemberActivationStatus.PENDING,
           },
+
           include: {
             organization: true,
+
             user: {
               select: {
                 id: true,
@@ -173,6 +233,54 @@ export class MembersService {
           },
         });
 
+        const memberRole = await tx.role.findUnique({
+          where: {
+            organizationId_code: {
+              organizationId,
+              code: 'MEMBER',
+            },
+          },
+        });
+
+        if (!memberRole) {
+          throw new NotFoundException('Default MEMBER role is not configured.');
+        }
+
+        const existingUserRole = await tx.userRole.findUnique({
+          where: {
+            userId_roleId: {
+              userId,
+              roleId: memberRole.id,
+            },
+          },
+        });
+
+        if (!existingUserRole) {
+          await tx.userRole.create({
+            data: {
+              userId,
+              roleId: memberRole.id,
+              assignedBy: actorUserId,
+            },
+          });
+        }
+
+        if (source !== MemberSource.REGISTRATION) {
+          const token = randomBytes(32).toString('hex');
+
+          const tokenHash = await bcrypt.hash(token, 12);
+
+          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+          await tx.memberActivation.create({
+            data: {
+              memberId: member.id,
+              tokenHash,
+              expiresAt,
+            },
+          });
+        }
+
         await tx.auditLog.create({
           data: {
             organizationId,
@@ -180,11 +288,20 @@ export class MembersService {
             action: 'CREATE',
             entityType: 'Member',
             entityId: member.id,
+
             newValue: {
               category: member.category,
+
               registrationNumber: member.registrationNumber,
+
               memberNumber: member.memberNumber,
+
               status: member.status,
+
+              source: member.source,
+
+              activationStatus: member.activationStatus,
+
               userId: member.userId,
             },
           },
@@ -277,9 +394,13 @@ export class MembersService {
 
     const oldValue = {
       category: existingMember.category,
+
       registrationNumber: existingMember.registrationNumber,
+
       memberNumber: existingMember.memberNumber,
+
       status: existingMember.status,
+
       userId: existingMember.userId,
     };
 
@@ -301,9 +422,12 @@ export class MembersService {
         where: {
           id,
         },
+
         data,
+
         include: {
           organization: true,
+
           user: {
             select: {
               id: true,
@@ -322,12 +446,18 @@ export class MembersService {
           action: 'UPDATE',
           entityType: 'Member',
           entityId: member.id,
+
           oldValue,
+
           newValue: {
             category: member.category,
+
             registrationNumber: member.registrationNumber,
+
             memberNumber: member.memberNumber,
+
             status: member.status,
+
             userId: member.userId,
           },
         },
@@ -337,6 +467,149 @@ export class MembersService {
     });
 
     return this.toSafeMember(updatedMember);
+  }
+
+  async activateByToken(token: string, password: string) {
+    const now = new Date();
+
+    const activations = await this.prisma.memberActivation.findMany({
+      where: {
+        usedAt: null,
+
+        expiresAt: {
+          gt: now,
+        },
+      },
+
+      include: {
+        member: {
+          include: {
+            user: true,
+            organization: true,
+          },
+        },
+      },
+    });
+
+    let matchedActivation: (typeof activations)[number] | null = null;
+
+    for (const activation of activations) {
+      const matches = await bcrypt.compare(token, activation.tokenHash);
+
+      if (matches) {
+        matchedActivation = activation;
+        break;
+      }
+    }
+
+    if (!matchedActivation) {
+      throw new NotFoundException(
+        'This activation link is invalid or has expired.',
+      );
+    }
+
+    const member = matchedActivation.member;
+
+    if (!member.user) {
+      throw new ConflictException(
+        'This member is not linked to a user account.',
+      );
+    }
+
+    if (member.activationStatus === MemberActivationStatus.COMPLETED) {
+      throw new ConflictException(
+        'This membership has already been activated.',
+      );
+    }
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      throw new ConflictException(
+        'This activation flow is only available for migrated members.',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const activated = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: {
+          id: member.user!.id,
+        },
+
+        data: {
+          passwordHash,
+          status: UserStatus.ACTIVE,
+        },
+      });
+
+      const updatedMember = await tx.member.update({
+        where: {
+          id: member.id,
+        },
+
+        data: {
+          activationStatus: MemberActivationStatus.COMPLETED,
+        },
+
+        include: {
+          organization: true,
+
+          user: {
+            select: {
+              id: true,
+              email: true,
+              status: true,
+              isSystemOwner: true,
+            },
+          },
+        },
+      });
+
+      await tx.memberActivation.update({
+        where: {
+          id: matchedActivation.id,
+        },
+
+        data: {
+          usedAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: member.organizationId,
+
+          actorUserId: member.user?.id,
+
+          action: 'ACTIVATE',
+
+          entityType: 'MemberActivation',
+
+          entityId: member.id,
+
+          newValue: {
+            memberId: member.id,
+
+            memberNumber: member.memberNumber,
+
+            userId: user.id,
+
+            activationStatus: MemberActivationStatus.COMPLETED,
+          },
+        },
+      });
+
+      return updatedMember;
+    });
+
+    return {
+      message: 'Membership activation completed successfully.',
+
+      member: this.toSafeMember(activated),
+    };
   }
 
   async approve(id: string, organizationId: string, actorUserId: string) {
@@ -381,6 +654,7 @@ export class MembersService {
         id,
         organizationId,
       },
+
       include: {
         user: true,
       },
@@ -407,11 +681,14 @@ export class MembersService {
         where: {
           id,
         },
+
         data: {
           status,
         },
+
         include: {
           organization: true,
+
           user: {
             select: {
               id: true,
@@ -430,14 +707,20 @@ export class MembersService {
           action,
           entityType: 'Member',
           entityId: member.id,
+
           oldValue: {
             category: member.category,
+
             memberNumber: member.memberNumber,
+
             status: oldStatus,
           },
+
           newValue: {
             category: member.category,
+
             memberNumber: member.memberNumber,
+
             status: member.status,
           },
         },
@@ -452,18 +735,31 @@ export class MembersService {
   private toSafeMember(member: SafeMemberRecord) {
     return {
       id: member.id,
+
       organizationId: member.organizationId,
+
       category: member.category,
+
       registrationNumber: member.registrationNumber ?? null,
+
       memberNumber: member.memberNumber,
+
       status: member.status,
+
+      source: member.source,
+
+      activationStatus: member.activationStatus,
+
       createdAt: member.createdAt,
+
       updatedAt: member.updatedAt,
 
       organization: member.organization
         ? {
             id: member.organization.id,
+
             name: member.organization.name,
+
             code: member.organization.code,
           }
         : null,
@@ -471,8 +767,11 @@ export class MembersService {
       user: member.user
         ? {
             id: member.user.id,
+
             email: member.user.email,
+
             status: member.user.status,
+
             isSystemOwner: member.user.isSystemOwner,
           }
         : null,

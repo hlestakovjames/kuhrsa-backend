@@ -1,11 +1,12 @@
 import {
   IsEmail,
   IsEnum,
+  IsNotEmpty,
   IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
-import { MemberCategory } from '../../../generated/prisma/client';
+import { MemberCategory, MemberSource } from '../../../generated/prisma/client';
 
 export class CreateMemberDto {
   @IsEnum(MemberCategory)
@@ -16,7 +17,20 @@ export class CreateMemberDto {
   @MinLength(2)
   registrationNumber?: string;
 
-  @IsOptional()
   @IsEmail()
-  email?: string;
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(1)
+  firstName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(1)
+  lastName!: string;
+
+  @IsOptional()
+  @IsEnum(MemberSource)
+  source?: MemberSource;
 }

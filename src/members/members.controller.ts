@@ -24,14 +24,21 @@ export class MembersController {
   @Get()
   @UseGuards(PermissionsGuard)
   @Permissions('members.view')
-  async findAll(@Request() req: AuthenticatedRequest) {
+  async findAll(
+    @Request()
+    req: AuthenticatedRequest,
+  ) {
     return this.membersService.findAll(req.user.organizationId);
   }
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
   @Permissions('members.view')
-  async findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+  async findOne(
+    @Param('id') id: string,
+    @Request()
+    req: AuthenticatedRequest,
+  ) {
     return this.membersService.findOne(id, req.user.organizationId);
   }
 
@@ -40,7 +47,8 @@ export class MembersController {
   @Permissions('members.manage')
   async create(
     @Body() dto: CreateMemberDto,
-    @Request() req: AuthenticatedRequest,
+    @Request()
+    req: AuthenticatedRequest,
   ) {
     return this.membersService.create(
       req.user.organizationId,
@@ -55,7 +63,8 @@ export class MembersController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateMemberDto,
-    @Request() req: AuthenticatedRequest,
+    @Request()
+    req: AuthenticatedRequest,
   ) {
     return this.membersService.update(
       id,
@@ -68,7 +77,11 @@ export class MembersController {
   @Post(':id/approve')
   @UseGuards(PermissionsGuard)
   @Permissions('members.approve')
-  async approve(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+  async approve(
+    @Param('id') id: string,
+    @Request()
+    req: AuthenticatedRequest,
+  ) {
     return this.membersService.approve(
       id,
       req.user.organizationId,
@@ -81,7 +94,8 @@ export class MembersController {
   @Permissions('members.manage')
   async activate(
     @Param('id') id: string,
-    @Request() req: AuthenticatedRequest,
+    @Request()
+    req: AuthenticatedRequest,
   ) {
     return this.membersService.activate(
       id,
@@ -93,7 +107,11 @@ export class MembersController {
   @Post(':id/suspend')
   @UseGuards(PermissionsGuard)
   @Permissions('members.manage')
-  async suspend(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+  async suspend(
+    @Param('id') id: string,
+    @Request()
+    req: AuthenticatedRequest,
+  ) {
     return this.membersService.suspend(
       id,
       req.user.organizationId,
