@@ -71,11 +71,14 @@ model Organization {
 model User {
   id             String     @id @default(uuid())
   organizationId String
+
+  firstName String?
+  lastName  String?
+
   email          String     @unique
   passwordHash   String
   status         UserStatus @default(ACTIVE)
-
-  isSystemOwner Boolean @default(false)
+  isSystemOwner  Boolean    @default(false)
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -88,6 +91,8 @@ model User {
 
   @@index([organizationId])
   @@index([status])
+  @@index([firstName])
+  @@index([lastName])
 }
 
 model Member {

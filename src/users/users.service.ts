@@ -13,10 +13,17 @@ import { UpdateUserDto } from './dto/update-user.dto';
 interface SafeUserRecord {
   id: string;
   organizationId: string;
+
+  firstName?: string | null;
+  lastName?: string | null;
+
   email: string;
   status: string;
   isSystemOwner: boolean;
+
   lastLoginAt?: Date | null;
+  createdAt?: Date;
+  updatedAt?: Date;
 
   organization?: {
     id: string;
@@ -223,16 +230,39 @@ export class UsersService {
       throw new NotFoundException('Default MEMBER role is not configured.');
     }
 
+    let roleToAssign = memberRole;
+
+    if (dto.roleId) {
+      const requestedRole = await this.prisma.role.findFirst({
+        where: {
+          id: dto.roleId,
+          organizationId,
+        },
+      });
+
+      if (!requestedRole) {
+        throw new NotFoundException('Selected role was not found.');
+      }
+
+      roleToAssign = requestedRole;
+    }
+
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     const user = await this.prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
         data: {
           organizationId,
+
+          firstName: dto.firstName.trim(),
+
+          lastName: dto.lastName.trim(),
+
           email,
           passwordHash,
           status: 'ACTIVE',
         },
+
         include: {
           organization: true,
           member: true,
@@ -247,7 +277,7 @@ export class UsersService {
       await tx.userRole.create({
         data: {
           userId: createdUser.id,
-          roleId: memberRole.id,
+          roleId: roleToAssign.id,
           assignedBy: actorUserId,
         },
       });
@@ -261,8 +291,20 @@ export class UsersService {
           entityId: createdUser.id,
           newValue: {
             id: createdUser.id,
+
+            firstName: createdUser.firstName,
+
+            lastName: createdUser.lastName,
+
             email: createdUser.email,
+
             status: createdUser.status,
+
+            role: {
+              id: roleToAssign.id,
+              name: roleToAssign.name,
+              code: roleToAssign.code,
+            },
           },
         },
       });
@@ -311,7 +353,12 @@ export class UsersService {
     }
 
     const oldValue = {
+      firstName: existingUser.firstName,
+
+      lastName: existingUser.lastName,
+
       email: existingUser.email,
+
       status: existingUser.status,
     };
 
@@ -320,8 +367,26 @@ export class UsersService {
         where: {
           id,
         },
+
         data: {
-          ...(email !== undefined ? { email } : {}),
+          ...(dto.firstName !== undefined
+            ? {
+                firstName: dto.firstName.trim(),
+              }
+            : {}),
+
+          ...(dto.lastName !== undefined
+            ? {
+                lastName: dto.lastName.trim(),
+              }
+            : {}),
+
+          ...(email !== undefined
+            ? {
+                email,
+              }
+            : {}),
+
           ...(dto.status !== undefined
             ? {
                 status: dto.status,
@@ -337,9 +402,16 @@ export class UsersService {
           action: 'UPDATE',
           entityType: 'User',
           entityId: user.id,
+
           oldValue,
+
           newValue: {
+            firstName: user.firstName,
+
+            lastName: user.lastName,
+
             email: user.email,
+
             status: user.status,
           },
         },
@@ -354,9 +426,11 @@ export class UsersService {
   private activeUserRoleWhere(now: Date) {
     return {
       revokedAt: null,
+
       startsAt: {
         lte: now,
       },
+
       OR: [
         {
           endsAt: null,
@@ -373,16 +447,31 @@ export class UsersService {
   private toSafeUser(user: SafeUserRecord) {
     return {
       id: user.id,
+
       organizationId: user.organizationId,
+
+      firstName: user.firstName ?? null,
+
+      lastName: user.lastName ?? null,
+
       email: user.email,
+
       status: user.status,
+
       isSystemOwner: user.isSystemOwner,
+
       lastLoginAt: user.lastLoginAt ?? null,
+
+      createdAt: user.createdAt ?? null,
+
+      updatedAt: user.updatedAt ?? null,
 
       organization: user.organization
         ? {
             id: user.organization.id,
+
             name: user.organization.name,
+
             code: user.organization.code,
           }
         : null,
@@ -390,8 +479,11 @@ export class UsersService {
       member: user.member
         ? {
             id: user.member.id,
+
             registrationNumber: user.member.registrationNumber ?? null,
+
             memberNumber: user.member.memberNumber,
+
             status: user.member.status,
           }
         : null,
@@ -399,7 +491,9 @@ export class UsersService {
       roles:
         user.userRoles?.map((userRole) => ({
           id: userRole.role.id,
+
           name: userRole.role.name,
+
           code: userRole.role.code,
         })) ?? [],
     };
