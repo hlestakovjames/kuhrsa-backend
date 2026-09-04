@@ -15,6 +15,7 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMemberDto } from './dto/create-member.dto';
+import { LinkMemberAccountDto } from './dto/link-member-account.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberNumberService } from './member-number.service';
 
@@ -22,8 +23,26 @@ interface SafeMemberRecord {
   id: string;
   organizationId: string;
   category: MemberCategory;
+
   registrationNumber?: string | null;
+  admissionNumber?: string | null;
   memberNumber: string;
+
+  yearOfStudy?: number | null;
+  graduationYear?: number | null;
+  nationalId?: string | null;
+  staffNumber?: string | null;
+  position?: string | null;
+
+  programme?: string | null;
+  faculty?: string | null;
+  department?: string | null;
+
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  county?: string | null;
+
   status: string;
   source: MemberSource;
   activationStatus: MemberActivationStatus;
@@ -111,9 +130,19 @@ export class MembersService {
 
     const registrationNumber = dto.registrationNumber?.trim() || undefined;
 
-    const email = dto.email.toLowerCase().trim();
+    const nationalId = dto.nationalId?.trim() || undefined;
+
+    const staffNumber = dto.staffNumber?.trim() || undefined;
+
+    const email = dto.email?.toLowerCase().trim();
 
     const source = sourceOverride ?? dto.source ?? MemberSource.REGISTRATION;
+
+    if (!email) {
+      throw new ConflictException(
+        'An email address is required when creating a member through this endpoint.',
+      );
+    }
 
     if (registrationNumber) {
       const existingRegistration = await this.prisma.member.findUnique({
@@ -123,9 +152,41 @@ export class MembersService {
       });
 
       if (existingRegistration) {
-        throw new ConflictException(
-          'A member with this registration number already exists.',
-        );
+        throw new ConflictException({
+          code: 'MEMBER_IDENTIFIER_IN_USE',
+          message:
+            'A member with this registration/admission number already exists.',
+        });
+      }
+    }
+
+    if (nationalId) {
+      const existingNationalId = await this.prisma.member.findUnique({
+        where: {
+          nationalId,
+        },
+      });
+
+      if (existingNationalId) {
+        throw new ConflictException({
+          code: 'NATIONAL_ID_IN_USE',
+          message: 'A member with this National ID already exists.',
+        });
+      }
+    }
+
+    if (staffNumber) {
+      const existingStaffNumber = await this.prisma.member.findUnique({
+        where: {
+          staffNumber,
+        },
+      });
+
+      if (existingStaffNumber) {
+        throw new ConflictException({
+          code: 'STAFF_NUMBER_IN_USE',
+          message: 'A member with this staff/employee number already exists.',
+        });
       }
     }
 
@@ -174,15 +235,10 @@ export class MembersService {
           const user = await tx.user.create({
             data: {
               organizationId,
-
               firstName: dto.firstName.trim(),
-
               lastName: dto.lastName.trim(),
-
               email,
-
               passwordHash,
-
               status:
                 source === MemberSource.REGISTRATION
                   ? UserStatus.ACTIVE
@@ -198,7 +254,6 @@ export class MembersService {
             },
             data: {
               firstName: dto.firstName.trim(),
-
               lastName: dto.lastName.trim(),
             },
           });
@@ -212,6 +267,40 @@ export class MembersService {
             memberNumber,
             userId,
             source,
+
+            yearOfStudy:
+              category === MemberCategory.STUDENT ? dto.yearOfStudy : null,
+
+            graduationYear:
+              category === MemberCategory.ALUMNI ? dto.graduationYear : null,
+
+            nationalId: category === MemberCategory.ALUMNI ? nationalId : null,
+
+            staffNumber:
+              category === MemberCategory.LECTURER ? staffNumber : null,
+
+            position:
+              category === MemberCategory.LECTURER
+                ? dto.position?.trim() || null
+                : null,
+
+            programme:
+              category === MemberCategory.STUDENT ||
+              category === MemberCategory.ALUMNI
+                ? dto.programme?.trim() || null
+                : null,
+
+            faculty: dto.faculty.trim(),
+
+            department: dto.department.trim(),
+
+            email,
+
+            phone: dto.phone?.trim() || null,
+
+            address: dto.address?.trim() || null,
+
+            county: dto.county?.trim() || null,
 
             activationStatus:
               source === MemberSource.REGISTRATION
@@ -295,6 +384,22 @@ export class MembersService {
               registrationNumber: member.registrationNumber,
 
               memberNumber: member.memberNumber,
+
+              yearOfStudy: member.yearOfStudy,
+
+              graduationYear: member.graduationYear,
+
+              nationalId: member.nationalId ? '[PROTECTED]' : null,
+
+              staffNumber: member.staffNumber,
+
+              position: member.position,
+
+              programme: member.programme,
+
+              faculty: member.faculty,
+
+              department: member.department,
 
               status: member.status,
 
@@ -467,6 +572,233 @@ export class MembersService {
     });
 
     return this.toSafeMember(updatedMember);
+  }
+
+  async linkAccount(
+    id: string,
+    organizationId: string,
+    actorUserId: string,
+    dto: LinkMemberAccountDto,
+  ) {
+    const member = await this.prisma.member.findFirst({
+      where: {
+        id,
+        organizationId,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Member not found.');
+    }
+
+    if (member.userId) {
+      throw new ConflictException({
+        code: 'MEMBER_ACCOUNT_ALREADY_LINKED',
+        message: 'This member is already linked to a user account.',
+      });
+    }
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      throw new ConflictException({
+        code: 'INVALID_MEMBER_SOURCE',
+        message:
+          'Account linking through this endpoint is only available for migrated members.',
+      });
+    }
+
+    const email = dto.email.trim().toLowerCase();
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+      include: {
+        member: true,
+      },
+    });
+
+    if (existingUser) {
+      throw new ConflictException({
+        code: 'EMAIL_IN_USE',
+        message: existingUser.member
+          ? 'This email is already linked to another KUHRSA member.'
+          : 'This email is already associated with a KUHRSA account.',
+      });
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * RECOVER MIGRATED MEMBER NAME
+     * ------------------------------------------------------------
+     *
+     * Member stores the membership profile, while firstName and
+     * lastName are stored on User.
+     *
+     * For migrated members that were imported without email,
+     * the original names are preserved in MigrationBatchRow.
+     */
+
+    const migrationRow = await this.prisma.migrationBatchRow.findFirst({
+      where: {
+        memberId: id,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      select: {
+        firstName: true,
+        lastName: true,
+      },
+    });
+
+    const firstName = migrationRow?.firstName?.trim() || 'KUHRSA';
+
+    const lastName = migrationRow?.lastName?.trim() || 'Member';
+
+    const temporaryPassword = randomBytes(32).toString('hex');
+
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+
+    const activationToken = randomBytes(32).toString('hex');
+
+    const tokenHash = await bcrypt.hash(activationToken, 12);
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          organizationId,
+
+          firstName,
+
+          lastName,
+
+          email,
+
+          passwordHash,
+
+          status: UserStatus.INACTIVE,
+        },
+      });
+
+      const memberRole = await tx.role.findUnique({
+        where: {
+          organizationId_code: {
+            organizationId,
+            code: 'MEMBER',
+          },
+        },
+      });
+
+      if (!memberRole) {
+        throw new NotFoundException('Default MEMBER role is not configured.');
+      }
+
+      await tx.userRole.create({
+        data: {
+          userId: user.id,
+          roleId: memberRole.id,
+          assignedBy: actorUserId,
+        },
+      });
+
+      const updatedMember = await tx.member.update({
+        where: {
+          id: member.id,
+        },
+
+        data: {
+          userId: user.id,
+          email,
+
+          activationStatus: MemberActivationStatus.PENDING,
+        },
+
+        include: {
+          organization: true,
+
+          user: {
+            select: {
+              id: true,
+              email: true,
+              status: true,
+              isSystemOwner: true,
+            },
+          },
+        },
+      });
+
+      await tx.memberActivation.upsert({
+        where: {
+          memberId: member.id,
+        },
+
+        create: {
+          memberId: member.id,
+          tokenHash,
+          expiresAt,
+        },
+
+        update: {
+          tokenHash,
+          expiresAt,
+          usedAt: null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorUserId,
+          action: 'UPDATE',
+          entityType: 'Member',
+          entityId: member.id,
+
+          oldValue: {
+            memberNumber: member.memberNumber,
+
+            userId: null,
+
+            email: member.email,
+
+            activationStatus: member.activationStatus,
+          },
+
+          newValue: {
+            memberNumber: updatedMember.memberNumber,
+
+            userId: user.id,
+
+            email,
+
+            activationStatus: updatedMember.activationStatus,
+          },
+        },
+      });
+
+      return {
+        member: updatedMember,
+
+        activationToken,
+      };
+    });
+
+    return {
+      message: 'User account linked to the migrated member successfully.',
+
+      member: this.toSafeMember(result.member),
+
+      activationToken: result.activationToken,
+
+      activationExpiresAt: expiresAt,
+    };
   }
 
   async activateByToken(token: string, password: string) {
@@ -742,7 +1074,31 @@ export class MembersService {
 
       registrationNumber: member.registrationNumber ?? null,
 
+      admissionNumber: member.admissionNumber ?? null,
+
       memberNumber: member.memberNumber,
+
+      yearOfStudy: member.yearOfStudy ?? null,
+
+      graduationYear: member.graduationYear ?? null,
+
+      staffNumber: member.staffNumber ?? null,
+
+      position: member.position ?? null,
+
+      programme: member.programme ?? null,
+
+      faculty: member.faculty ?? null,
+
+      department: member.department ?? null,
+
+      email: member.email ?? null,
+
+      phone: member.phone ?? null,
+
+      address: member.address ?? null,
+
+      county: member.county ?? null,
 
       status: member.status,
 

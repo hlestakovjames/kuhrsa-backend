@@ -9,10 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+
 import { CreateMemberDto } from './dto/create-member.dto';
+import { LinkMemberAccountDto } from './dto/link-member-account.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MembersService } from './members.service';
 
@@ -67,6 +70,23 @@ export class MembersController {
     req: AuthenticatedRequest,
   ) {
     return this.membersService.update(
+      id,
+      req.user.organizationId,
+      req.user.id,
+      dto,
+    );
+  }
+
+  @Post(':id/link-account')
+  @UseGuards(PermissionsGuard)
+  @Permissions('members.manage')
+  async linkAccount(
+    @Param('id') id: string,
+    @Body() dto: LinkMemberAccountDto,
+    @Request()
+    req: AuthenticatedRequest,
+  ) {
+    return this.membersService.linkAccount(
       id,
       req.user.organizationId,
       req.user.id,

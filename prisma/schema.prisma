@@ -48,6 +48,26 @@ enum MembershipPeriodStatus {
   CANCELLED
 }
 
+enum MigrationBatchStatus {
+  UPLOADED
+  VALIDATING
+  VALIDATED
+  IMPORTING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+  CANCELLED
+}
+
+enum MigrationRowStatus {
+  PENDING
+  VALID
+  INVALID
+  IMPORTED
+  FAILED
+  SKIPPED
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -77,21 +97,23 @@ model Organization {
   roles             Role[]
   membershipPeriods MembershipPeriod[]
   auditLogs         AuditLog[]
+  migrationBatches  MigrationBatch[]
 
   @@index([name])
 }
 
 model User {
-  id             String     @id @default(uuid())
+  id             String @id @default(uuid())
   organizationId String
 
   firstName String?
   lastName  String?
+  phone     String?
 
-  email          String     @unique
-  passwordHash   String
-  status         UserStatus @default(ACTIVE)
-  isSystemOwner  Boolean    @default(false)
+  email         String     @unique
+  passwordHash  String
+  status        UserStatus @default(ACTIVE)
+  isSystemOwner Boolean    @default(false)
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -115,8 +137,25 @@ model Member {
 
   category           MemberCategory @default(STUDENT)
   registrationNumber String?        @unique
+  admissionNumber    String?
   memberNumber       String         @unique
-  status             MemberStatus   @default(PENDING)
+
+  yearOfStudy    Int?
+  graduationYear Int?
+  nationalId     String? @unique
+  staffNumber    String? @unique
+  position       String?
+
+  programme  String?
+  faculty    String?
+  department String?
+
+  email   String?
+  phone   String?
+  address String?
+  county  String?
+
+  status MemberStatus @default(PENDING)
 
   source           MemberSource           @default(REGISTRATION)
   activationStatus MemberActivationStatus @default(NOT_REQUIRED)
@@ -139,12 +178,12 @@ model MemberActivation {
   id       String @id @default(uuid())
   memberId String @unique
 
-  tokenHash   String
-  expiresAt   DateTime
-  usedAt      DateTime?
-  lastSentAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  tokenHash  String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  lastSentAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
@@ -160,7 +199,7 @@ model MemberNumberSequence {
 }
 
 model MembershipPeriod {
-  id             String                  @id @default(uuid())
+  id             String                 @id @default(uuid())
   memberId       String
   organizationId String
   membershipYear String
@@ -168,8 +207,8 @@ model MembershipPeriod {
   endsAt         DateTime
   status         MembershipPeriodStatus @default(PENDING)
   activatedAt    DateTime?
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   member       Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -178,6 +217,82 @@ model MembershipPeriod {
   @@index([organizationId])
   @@index([status])
   @@index([startsAt, endsAt])
+}
+
+model MigrationBatch {
+  id             String @id @default(uuid())
+  organizationId String
+
+  fileName String
+  source   MemberSource
+  status   MigrationBatchStatus @default(UPLOADED)
+
+  totalRows    Int @default(0)
+  validRows    Int @default(0)
+  invalidRows  Int @default(0)
+  importedRows Int @default(0)
+  failedRows   Int @default(0)
+  skippedRows  Int @default(0)
+
+  createdBy   String
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rows         MigrationBatchRow[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+model MigrationBatchRow {
+  id               String @id @default(uuid())
+  migrationBatchId String
+
+  rowNumber Int
+  status    MigrationRowStatus @default(PENDING)
+
+  category MemberCategory?
+
+  firstName String?
+  lastName  String?
+
+  registrationNumber String?
+  nationalId         String?
+  staffNumber        String?
+
+  yearOfStudy    Int?
+  graduationYear Int?
+  programme      String?
+  faculty        String?
+  department     String?
+  position       String?
+
+  email   String?
+  phone   String?
+  address String?
+  county  String?
+
+  memberId     String?
+  memberNumber String?
+
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  migrationBatch MigrationBatch @relation(fields: [migrationBatchId], references: [id], onDelete: Cascade)
+
+  @@unique([migrationBatchId, rowNumber])
+  @@index([migrationBatchId])
+  @@index([status])
+  @@index([memberId])
 }
 
 model Role {
@@ -213,9 +328,9 @@ model Permission {
 }
 
 model UserRole {
-  id         String   @id @default(uuid())
-  userId     String
-  roleId     String
+  id     String @id @default(uuid())
+  userId String
+  roleId String
 
   assignedAt DateTime @default(now())
   assignedBy String?

@@ -10,6 +10,7 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { MembersModule } from './members/members.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
+import { MigrationsModule } from './migrations/migrations.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { HealthModule } from './health/health.module';
     MembersModule,
     DashboardModule,
     HealthModule,
+    MigrationsModule,
   ],
   providers: [
     {
