@@ -380,33 +380,19 @@ export class MembersService {
 
             newValue: {
               category: member.category,
-
               registrationNumber: member.registrationNumber,
-
               memberNumber: member.memberNumber,
-
               yearOfStudy: member.yearOfStudy,
-
               graduationYear: member.graduationYear,
-
               nationalId: member.nationalId ? '[PROTECTED]' : null,
-
               staffNumber: member.staffNumber,
-
               position: member.position,
-
               programme: member.programme,
-
               faculty: member.faculty,
-
               department: member.department,
-
               status: member.status,
-
               source: member.source,
-
               activationStatus: member.activationStatus,
-
               userId: member.userId,
             },
           },
@@ -632,18 +618,6 @@ export class MembersService {
       });
     }
 
-    /*
-     * ------------------------------------------------------------
-     * RECOVER MIGRATED MEMBER NAME
-     * ------------------------------------------------------------
-     *
-     * Member stores the membership profile, while firstName and
-     * lastName are stored on User.
-     *
-     * For migrated members that were imported without email,
-     * the original names are preserved in MigrationBatchRow.
-     */
-
     const migrationRow = await this.prisma.migrationBatchRow.findFirst({
       where: {
         memberId: id,
@@ -675,15 +649,10 @@ export class MembersService {
       const user = await tx.user.create({
         data: {
           organizationId,
-
           firstName,
-
           lastName,
-
           email,
-
           passwordHash,
-
           status: UserStatus.INACTIVE,
         },
       });
@@ -763,21 +732,15 @@ export class MembersService {
 
           oldValue: {
             memberNumber: member.memberNumber,
-
             userId: null,
-
             email: member.email,
-
             activationStatus: member.activationStatus,
           },
 
           newValue: {
             memberNumber: updatedMember.memberNumber,
-
             userId: user.id,
-
             email,
-
             activationStatus: updatedMember.activationStatus,
           },
         },
@@ -798,6 +761,533 @@ export class MembersService {
       activationToken: result.activationToken,
 
       activationExpiresAt: expiresAt,
+    };
+  }
+
+  async lookupActivationEligibility(
+    identifier: string,
+    email: string,
+    phone: string,
+  ) {
+    const normalizedIdentifier = identifier.trim();
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const normalizedPhone = phone.trim();
+
+    const member = await this.prisma.member.findFirst({
+      where: {
+        OR: [
+          {
+            memberNumber: normalizedIdentifier.toUpperCase(),
+          },
+          {
+            registrationNumber: normalizedIdentifier,
+          },
+        ],
+      },
+
+      include: {
+        user: true,
+      },
+    });
+
+    /*
+     * ------------------------------------------------------------
+     * MEMBER MUST EXIST AND HAVE A LINKED USER
+     * ------------------------------------------------------------
+     */
+
+    if (!member || !member.user) {
+      throw new NotFoundException({
+        code: 'MEMBER_NOT_FOUND',
+        message: 'No matching KUHRSA membership record was found.',
+      });
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * EMAIL AND PHONE MUST MATCH THE REGISTERED RECORD
+     * ------------------------------------------------------------
+     */
+
+    const storedEmail = member.user.email.trim().toLowerCase();
+
+    const storedPhone = member.phone?.trim() ?? '';
+
+    if (storedEmail !== normalizedEmail || storedPhone !== normalizedPhone) {
+      throw new NotFoundException({
+        code: 'MEMBER_NOT_FOUND',
+        message: 'No matching KUHRSA membership record was found.',
+      });
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * ALREADY ACTIVE
+     * ------------------------------------------------------------
+     */
+
+    if (
+      member.activationStatus === MemberActivationStatus.COMPLETED ||
+      member.user.status === UserStatus.ACTIVE
+    ) {
+      return {
+        exists: true,
+
+        eligible: false,
+
+        code: 'ALREADY_ACTIVE',
+
+        message: 'Your KUHRSA account is already active. Please log in.',
+
+        member: {
+          id: member.id,
+
+          memberNumber: member.memberNumber,
+
+          category: member.category,
+
+          registrationNumber: member.registrationNumber,
+
+          admissionNumber: member.admissionNumber,
+
+          activationStatus: member.activationStatus,
+        },
+      };
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * ONLY MIGRATED MEMBERS CAN USE THIS ACTIVATION FLOW
+     * ------------------------------------------------------------
+     */
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      return {
+        exists: true,
+
+        eligible: false,
+
+        code: 'ACTIVATION_NOT_AVAILABLE',
+
+        message:
+          'This KUHRSA membership is not currently eligible for activation.',
+
+        member: {
+          id: member.id,
+
+          memberNumber: member.memberNumber,
+
+          category: member.category,
+
+          registrationNumber: member.registrationNumber,
+
+          admissionNumber: member.admissionNumber,
+
+          activationStatus: member.activationStatus,
+        },
+      };
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * ACTIVATION MUST BE PENDING
+     * ------------------------------------------------------------
+     */
+
+    if (member.activationStatus !== MemberActivationStatus.PENDING) {
+      return {
+        exists: true,
+
+        eligible: false,
+
+        code: 'ACTIVATION_NOT_AVAILABLE',
+
+        message:
+          'This KUHRSA membership is not currently eligible for activation.',
+
+        member: {
+          id: member.id,
+
+          memberNumber: member.memberNumber,
+
+          category: member.category,
+
+          registrationNumber: member.registrationNumber,
+
+          admissionNumber: member.admissionNumber,
+
+          activationStatus: member.activationStatus,
+        },
+      };
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * CREATE A FRESH ACTIVATION SESSION
+     * ------------------------------------------------------------
+     *
+     * Only after the actual KUHRSA membership has been
+     * located and the registered email and phone have
+     * matched do we create a fresh activation token.
+     */
+
+    const activationToken = randomBytes(32).toString('hex');
+
+    const tokenHash = await bcrypt.hash(activationToken, 12);
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.memberActivation.upsert({
+        where: {
+          memberId: member.id,
+        },
+
+        create: {
+          memberId: member.id,
+
+          tokenHash,
+
+          expiresAt,
+        },
+
+        update: {
+          tokenHash,
+
+          expiresAt,
+
+          usedAt: null,
+        },
+      });
+
+      await tx.member.update({
+        where: {
+          id: member.id,
+        },
+
+        data: {
+          activationStatus: MemberActivationStatus.PENDING,
+        },
+      });
+    });
+
+    return {
+      exists: true,
+
+      eligible: true,
+
+      code: 'ELIGIBLE',
+
+      message: 'KUHRSA membership record found. You may continue.',
+
+      activationToken,
+
+      activationExpiresAt: expiresAt,
+
+      member: {
+        id: member.id,
+
+        memberNumber: member.memberNumber,
+
+        category: member.category,
+
+        registrationNumber: member.registrationNumber,
+
+        admissionNumber: member.admissionNumber,
+
+        activationStatus: MemberActivationStatus.PENDING,
+      },
+    };
+  }
+
+  async resendActivation(
+    id: string,
+    organizationId: string,
+    actorUserId: string,
+  ) {
+    const member = await this.prisma.member.findFirst({
+      where: {
+        id,
+        organizationId,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Member not found.');
+    }
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      throw new ConflictException({
+        code: 'INVALID_MEMBER_SOURCE',
+        message: 'Activation resend is only available for migrated members.',
+      });
+    }
+
+    if (!member.user) {
+      throw new ConflictException({
+        code: 'MEMBER_ACCOUNT_NOT_LINKED',
+        message:
+          'This member does not have a linked user account. Link the account first.',
+      });
+    }
+
+    if (
+      member.activationStatus === MemberActivationStatus.COMPLETED ||
+      member.user.status === UserStatus.ACTIVE
+    ) {
+      throw new ConflictException({
+        code: 'ALREADY_ACTIVE',
+        message:
+          'This member account is already active. No activation resend is required.',
+      });
+    }
+
+    const activationToken = randomBytes(32).toString('hex');
+
+    const tokenHash = await bcrypt.hash(activationToken, 12);
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const activation = await this.prisma.$transaction(async (tx) => {
+      const activation = await tx.memberActivation.upsert({
+        where: {
+          memberId: member.id,
+        },
+
+        create: {
+          memberId: member.id,
+          tokenHash,
+          expiresAt,
+        },
+
+        update: {
+          tokenHash,
+          expiresAt,
+          usedAt: null,
+        },
+      });
+
+      await tx.member.update({
+        where: {
+          id: member.id,
+        },
+
+        data: {
+          activationStatus: MemberActivationStatus.PENDING,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorUserId,
+          action: 'UPDATE',
+          entityType: 'MemberActivation',
+          entityId: member.id,
+
+          oldValue: {
+            memberNumber: member.memberNumber,
+
+            activationStatus: member.activationStatus,
+          },
+
+          newValue: {
+            memberNumber: member.memberNumber,
+
+            activationStatus: MemberActivationStatus.PENDING,
+
+            activationExpiresAt: expiresAt,
+          },
+        },
+      });
+
+      return activation;
+    });
+
+    return {
+      message: 'A new membership activation link has been generated.',
+
+      member: {
+        id: member.id,
+
+        memberNumber: member.memberNumber,
+
+        category: member.category,
+
+        email: member.user.email,
+
+        activationStatus: MemberActivationStatus.PENDING,
+      },
+
+      activationToken,
+
+      activationExpiresAt: activation.expiresAt,
+    };
+  }
+
+  async verifyActivation(
+    token: string,
+    memberNumber: string,
+    firstName: string,
+    lastName: string,
+    email: string,
+  ) {
+    const now = new Date();
+
+    const activations = await this.prisma.memberActivation.findMany({
+      where: {
+        usedAt: null,
+
+        expiresAt: {
+          gt: now,
+        },
+      },
+
+      include: {
+        member: {
+          include: {
+            user: true,
+            organization: true,
+          },
+        },
+      },
+    });
+
+    let matchedActivation: (typeof activations)[number] | null = null;
+
+    for (const activation of activations) {
+      const matches = await bcrypt.compare(token, activation.tokenHash);
+
+      if (matches) {
+        matchedActivation = activation;
+
+        break;
+      }
+    }
+
+    if (!matchedActivation) {
+      throw new NotFoundException({
+        code: 'MEMBER_NOT_FOUND',
+        message:
+          'We could not find a valid KUHRSA membership activation request.',
+      });
+    }
+
+    const member = matchedActivation.member;
+
+    if (!member.user) {
+      throw new ConflictException({
+        code: 'MEMBER_ACCOUNT_NOT_LINKED',
+        message:
+          'This KUHRSA membership has not yet been linked to a user account.',
+      });
+    }
+
+    if (
+      member.activationStatus === MemberActivationStatus.COMPLETED ||
+      member.user.status === UserStatus.ACTIVE
+    ) {
+      return {
+        verified: false,
+
+        code: 'ALREADY_ACTIVE',
+
+        message: 'Your KUHRSA account is already active. Please log in.',
+
+        member: {
+          id: member.id,
+
+          memberNumber: member.memberNumber,
+
+          category: member.category,
+
+          activationStatus: member.activationStatus,
+        },
+      };
+    }
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      throw new ConflictException({
+        code: 'ACTIVATION_NOT_AVAILABLE',
+        message: 'This activation flow is only available for migrated members.',
+      });
+    }
+
+    if (member.activationStatus !== MemberActivationStatus.PENDING) {
+      throw new ConflictException({
+        code: 'ACTIVATION_NOT_AVAILABLE',
+        message:
+          'This KUHRSA membership is not currently eligible for activation.',
+      });
+    }
+
+    const storedFirstName = member.user.firstName?.trim().toLowerCase() ?? '';
+
+    const storedLastName = member.user.lastName?.trim().toLowerCase() ?? '';
+
+    const suppliedFirstName = firstName.trim().toLowerCase();
+
+    const suppliedLastName = lastName.trim().toLowerCase();
+
+    const storedEmail = member.user.email?.trim().toLowerCase() ?? '';
+
+    const suppliedEmail = email.trim().toLowerCase();
+
+    const memberNumberMatches =
+      member.memberNumber.trim().toLowerCase() ===
+      memberNumber.trim().toLowerCase();
+
+    const firstNameMatches = storedFirstName === suppliedFirstName;
+
+    const lastNameMatches = storedLastName === suppliedLastName;
+
+    const emailMatches =
+      storedEmail.length > 0 && storedEmail === suppliedEmail;
+
+    if (
+      !memberNumberMatches ||
+      !firstNameMatches ||
+      !lastNameMatches ||
+      !emailMatches
+    ) {
+      throw new ConflictException({
+        code: 'VERIFICATION_FAILED',
+        message:
+          'The details provided do not match the KUHRSA membership record.',
+      });
+    }
+
+    return {
+      verified: true,
+
+      code: 'VERIFIED',
+
+      message:
+        'Membership details verified successfully. You may now create your password.',
+
+      member: {
+        id: member.id,
+
+        memberNumber: member.memberNumber,
+
+        category: member.category,
+
+        activationStatus: member.activationStatus,
+      },
     };
   }
 
@@ -830,37 +1320,54 @@ export class MembersService {
 
       if (matches) {
         matchedActivation = activation;
+
         break;
       }
     }
 
     if (!matchedActivation) {
-      throw new NotFoundException(
-        'This activation link is invalid or has expired.',
-      );
+      throw new NotFoundException({
+        code: 'MEMBER_NOT_FOUND',
+        message: 'This activation link is invalid or has expired.',
+      });
     }
 
     const member = matchedActivation.member;
 
     if (!member.user) {
-      throw new ConflictException(
-        'This member is not linked to a user account.',
-      );
+      throw new ConflictException({
+        code: 'MEMBER_ACCOUNT_NOT_LINKED',
+        message: 'This membership is not yet linked to a KUHRSA account.',
+      });
     }
 
-    if (member.activationStatus === MemberActivationStatus.COMPLETED) {
-      throw new ConflictException(
-        'This membership has already been activated.',
-      );
+    if (
+      member.activationStatus === MemberActivationStatus.COMPLETED ||
+      member.user.status === UserStatus.ACTIVE
+    ) {
+      throw new ConflictException({
+        code: 'ALREADY_ACTIVE',
+        message: 'Your KUHRSA account is already active. Please log in.',
+      });
     }
 
     if (
       member.source !== MemberSource.MIGRATION_IMPORT &&
       member.source !== MemberSource.MIGRATION_MANUAL
     ) {
-      throw new ConflictException(
-        'This activation flow is only available for migrated members.',
-      );
+      throw new ConflictException({
+        code: 'ACTIVATION_NOT_AVAILABLE',
+        message:
+          'This KUHRSA membership is not currently eligible for activation.',
+      });
+    }
+
+    if (member.activationStatus !== MemberActivationStatus.PENDING) {
+      throw new ConflictException({
+        code: 'ACTIVATION_NOT_AVAILABLE',
+        message:
+          'This KUHRSA membership is not currently eligible for activation.',
+      });
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
@@ -873,6 +1380,7 @@ export class MembersService {
 
         data: {
           passwordHash,
+
           status: UserStatus.ACTIVE,
         },
       });
