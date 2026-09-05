@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -20,6 +21,7 @@ import { randomBytes } from 'crypto';
 import ExcelJS from 'exceljs';
 
 import { MemberNumberService } from '../members/member-number.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CsvParser } from './parsers/csv.parser';
 import { ExcelParser, MigrationParsedRow } from './parsers/excel.parser';
@@ -60,13 +62,22 @@ interface DuplicateTracker {
   phones: Map<string, number>;
 }
 
+interface ImportedMemberResult {
+  memberId: string;
+  memberNumber: string;
+  email: string | null;
+}
+
 @Injectable()
 export class MigrationsService {
+  private readonly logger = new Logger(MigrationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly excelParser: ExcelParser,
     private readonly csvParser: CsvParser,
     private readonly memberNumberService: MemberNumberService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async generateTemplate(): Promise<Buffer> {
@@ -278,9 +289,13 @@ export class MigrationsService {
 
     const duplicateTracker: DuplicateTracker = {
       registrationNumbers: new Map<string, number>(),
+
       nationalIds: new Map<string, number>(),
+
       staffNumbers: new Map<string, number>(),
+
       emails: new Map<string, number>(),
+
       phones: new Map<string, number>(),
     };
 
@@ -789,7 +804,7 @@ export class MigrationsService {
 
     for (const row of rows) {
       try {
-        await this.importRow(
+        const importedMember = await this.importRow(
           batch.id,
           row.id,
           organizationId,
@@ -798,6 +813,31 @@ export class MigrationsService {
         );
 
         importedRows += 1;
+
+        /*
+         * IMPORTANT:
+         *
+         * The member import transaction has already committed
+         * before this notification is attempted.
+         *
+         * Therefore an email failure can never make a
+         * successfully imported member become a failed
+         * migration row.
+         */
+        try {
+          await this.notificationsService.sendMigrationWelcome(
+            importedMember.memberId,
+          );
+        } catch (notificationError) {
+          const message =
+            notificationError instanceof Error
+              ? notificationError.message
+              : 'The migration welcome notification could not be sent.';
+
+          this.logger.warn(
+            `Migration welcome notification failed for ${importedMember.memberNumber}: ${message}`,
+          );
+        }
       } catch (error) {
         failedRows += 1;
 
@@ -828,6 +868,7 @@ export class MigrationsService {
 
         data: {
           importedRows,
+
           failedRows,
         },
       });
@@ -894,8 +935,8 @@ export class MigrationsService {
     organizationId: string,
     actorUserId: string,
     source: MemberSource,
-  ): Promise<void> {
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  ): Promise<ImportedMemberResult> {
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const row = await tx.migrationBatchRow.findUnique({
         where: {
           id: migrationRowId,
@@ -909,7 +950,19 @@ export class MigrationsService {
       }
 
       if (row.status === MigrationRowStatus.IMPORTED) {
-        return;
+        if (!row.memberId || !row.memberNumber) {
+          throw new ConflictException(
+            `Migration row ${row.rowNumber} is marked as imported but has no linked member.`,
+          );
+        }
+
+        return {
+          memberId: row.memberId,
+
+          memberNumber: row.memberNumber,
+
+          email: row.email,
+        };
       }
 
       if (row.status !== MigrationRowStatus.VALID) {
@@ -1068,10 +1121,9 @@ export class MigrationsService {
       /*
        * Create activation only when an actual User account exists.
        *
-       * Legacy members without email are still imported as members
-       * and can later have an account linked by an administrator.
+       * The activation lookup flow can issue a fresh activation
+       * token when the member begins the activation process.
        */
-
       if (userId) {
         const activationToken = randomBytes(32).toString('hex');
 
@@ -1155,6 +1207,14 @@ export class MigrationsService {
           errorMessage: null,
         },
       });
+
+      return {
+        memberId: member.id,
+
+        memberNumber: member.memberNumber,
+
+        email: member.email,
+      };
     });
   }
 
@@ -1432,6 +1492,7 @@ export class MigrationsService {
       const existingMember = await this.prisma.member.findFirst({
         where: {
           organizationId,
+
           email,
         },
       });
@@ -1461,6 +1522,7 @@ export class MigrationsService {
       const existingMember = await this.prisma.member.findFirst({
         where: {
           organizationId,
+
           phone,
         },
       });
@@ -1544,6 +1606,7 @@ export class MigrationsService {
       county,
 
       errorCode: null,
+
       errorMessage: null,
     };
   }

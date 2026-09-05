@@ -11,6 +11,7 @@ import { MembersModule } from './members/members.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { MigrationsModule } from './migrations/migrations.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { MigrationsModule } from './migrations/migrations.module';
         limit: 100,
       },
     ]),
+
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -29,7 +31,9 @@ import { MigrationsModule } from './migrations/migrations.module';
     DashboardModule,
     HealthModule,
     MigrationsModule,
+    NotificationsModule,
   ],
+
   providers: [
     {
       provide: APP_GUARD,

@@ -85,6 +85,28 @@ enum AuditAction {
   OTHER
 }
 
+enum NotificationType {
+  MIGRATION_WELCOME
+  ACCOUNT_ACTIVATED
+  MEMBERSHIP_RENEWAL
+  PAYMENT_CONFIRMATION
+  PASSWORD_RESET
+  GENERAL_NOTICE
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
 model Organization {
   id        String   @id @default(uuid())
   name      String
@@ -98,6 +120,7 @@ model Organization {
   membershipPeriods MembershipPeriod[]
   auditLogs         AuditLog[]
   migrationBatches  MigrationBatch[]
+  notifications     Notification[]
 
   @@index([name])
 }
@@ -119,10 +142,11 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  member       Member?
-  userRoles    UserRole[]
-  auditLogs    AuditLog[]   @relation("AuditActor")
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  member        Member?
+  userRoles     UserRole[]
+  auditLogs     AuditLog[]     @relation("AuditActor")
+  notifications Notification[]
 
   @@index([organizationId])
   @@index([status])
@@ -167,6 +191,7 @@ model Member {
   user              User?              @relation(fields: [userId], references: [id])
   membershipPeriods MembershipPeriod[]
   activation        MemberActivation?
+  notifications     Notification[]
 
   @@index([organizationId])
   @@index([status])
@@ -384,5 +409,45 @@ model AuditLog {
   @@index([organizationId])
   @@index([actorUserId])
   @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id             String  @id @default(uuid())
+  organizationId String
+  memberId       String?
+  userId         String?
+
+  type    NotificationType
+  channel NotificationChannel
+  status  NotificationStatus  @default(PENDING)
+
+  recipient   String
+  subject     String?
+  templateKey String?
+
+  providerMessageId String?
+
+  sentAt   DateTime?
+  failedAt DateTime?
+
+  errorMessage String?
+  attempts     Int     @default(0)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member       Member?      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([memberId])
+  @@index([userId])
+  @@index([type])
+  @@index([channel])
+  @@index([status])
   @@index([createdAt])
 }
