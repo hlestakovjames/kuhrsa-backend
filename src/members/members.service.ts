@@ -57,6 +57,8 @@ interface SafeMemberRecord {
 
   user?: {
     id: string;
+    firstName: string | null;
+    lastName: string | null;
     email: string;
     status: string;
     isSystemOwner: boolean;
@@ -83,6 +85,8 @@ export class MembersService {
         user: {
           select: {
             id: true,
+            firstName: true,
+            lastName: true,
             email: true,
             status: true,
             isSystemOwner: true,
@@ -105,6 +109,8 @@ export class MembersService {
         user: {
           select: {
             id: true,
+            firstName: true,
+            lastName: true,
             email: true,
             status: true,
             isSystemOwner: true,
@@ -310,10 +316,11 @@ export class MembersService {
 
           include: {
             organization: true,
-
             user: {
               select: {
                 id: true,
+                firstName: true,
+                lastName: true,
                 email: true,
                 status: true,
                 isSystemOwner: true,
@@ -377,7 +384,6 @@ export class MembersService {
             action: 'CREATE',
             entityType: 'Member',
             entityId: member.id,
-
             newValue: {
               category: member.category,
               registrationNumber: member.registrationNumber,
@@ -485,77 +491,68 @@ export class MembersService {
 
     const oldValue = {
       category: existingMember.category,
-
       registrationNumber: existingMember.registrationNumber,
-
       memberNumber: existingMember.memberNumber,
-
       status: existingMember.status,
-
       userId: existingMember.userId,
     };
 
-    const updatedMember = await this.prisma.$transaction(async (tx) => {
-      const data: {
-        registrationNumber?: string;
-        userId?: string;
-      } = {};
+    const updatedMember = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const data: {
+          registrationNumber?: string;
+          userId?: string;
+        } = {};
 
-      if (registrationNumber !== undefined) {
-        data.registrationNumber = registrationNumber;
-      }
+        if (registrationNumber !== undefined) {
+          data.registrationNumber = registrationNumber;
+        }
 
-      if (newUserId !== undefined) {
-        data.userId = newUserId;
-      }
+        if (newUserId !== undefined) {
+          data.userId = newUserId;
+        }
 
-      const member = await tx.member.update({
-        where: {
-          id,
-        },
-
-        data,
-
-        include: {
-          organization: true,
-
-          user: {
-            select: {
-              id: true,
-              email: true,
-              status: true,
-              isSystemOwner: true,
+        const member = await tx.member.update({
+          where: {
+            id,
+          },
+          data,
+          include: {
+            organization: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                status: true,
+                isSystemOwner: true,
+              },
             },
           },
-        },
-      });
+        });
 
-      await tx.auditLog.create({
-        data: {
-          organizationId,
-          actorUserId,
-          action: 'UPDATE',
-          entityType: 'Member',
-          entityId: member.id,
-
-          oldValue,
-
-          newValue: {
-            category: member.category,
-
-            registrationNumber: member.registrationNumber,
-
-            memberNumber: member.memberNumber,
-
-            status: member.status,
-
-            userId: member.userId,
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            actorUserId,
+            action: 'UPDATE',
+            entityType: 'Member',
+            entityId: member.id,
+            oldValue,
+            newValue: {
+              category: member.category,
+              registrationNumber: member.registrationNumber,
+              memberNumber: member.memberNumber,
+              status: member.status,
+              userId: member.userId,
+            },
           },
-        },
-      });
+        });
 
-      return member;
-    });
+        return member;
+      },
+    );
 
     return this.toSafeMember(updatedMember);
   }
@@ -645,121 +642,113 @@ export class MembersService {
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          organizationId,
-          firstName,
-          lastName,
-          email,
-          passwordHash,
-          status: UserStatus.INACTIVE,
-        },
-      });
-
-      const memberRole = await tx.role.findUnique({
-        where: {
-          organizationId_code: {
+    const result = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const user = await tx.user.create({
+          data: {
             organizationId,
-            code: 'MEMBER',
+            firstName,
+            lastName,
+            email,
+            passwordHash,
+            status: UserStatus.INACTIVE,
           },
-        },
-      });
+        });
 
-      if (!memberRole) {
-        throw new NotFoundException('Default MEMBER role is not configured.');
-      }
-
-      await tx.userRole.create({
-        data: {
-          userId: user.id,
-          roleId: memberRole.id,
-          assignedBy: actorUserId,
-        },
-      });
-
-      const updatedMember = await tx.member.update({
-        where: {
-          id: member.id,
-        },
-
-        data: {
-          userId: user.id,
-          email,
-
-          activationStatus: MemberActivationStatus.PENDING,
-        },
-
-        include: {
-          organization: true,
-
-          user: {
-            select: {
-              id: true,
-              email: true,
-              status: true,
-              isSystemOwner: true,
+        const memberRole = await tx.role.findUnique({
+          where: {
+            organizationId_code: {
+              organizationId,
+              code: 'MEMBER',
             },
           },
-        },
-      });
+        });
 
-      await tx.memberActivation.upsert({
-        where: {
-          memberId: member.id,
-        },
+        if (!memberRole) {
+          throw new NotFoundException('Default MEMBER role is not configured.');
+        }
 
-        create: {
-          memberId: member.id,
-          tokenHash,
-          expiresAt,
-        },
-
-        update: {
-          tokenHash,
-          expiresAt,
-          usedAt: null,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          organizationId,
-          actorUserId,
-          action: 'UPDATE',
-          entityType: 'Member',
-          entityId: member.id,
-
-          oldValue: {
-            memberNumber: member.memberNumber,
-            userId: null,
-            email: member.email,
-            activationStatus: member.activationStatus,
+        await tx.userRole.create({
+          data: {
+            userId: user.id,
+            roleId: memberRole.id,
+            assignedBy: actorUserId,
           },
+        });
 
-          newValue: {
-            memberNumber: updatedMember.memberNumber,
+        const updatedMember = await tx.member.update({
+          where: {
+            id: member.id,
+          },
+          data: {
             userId: user.id,
             email,
-            activationStatus: updatedMember.activationStatus,
+            activationStatus: MemberActivationStatus.PENDING,
           },
-        },
-      });
+          include: {
+            organization: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                status: true,
+                isSystemOwner: true,
+              },
+            },
+          },
+        });
 
-      return {
-        member: updatedMember,
+        await tx.memberActivation.upsert({
+          where: {
+            memberId: member.id,
+          },
+          create: {
+            memberId: member.id,
+            tokenHash,
+            expiresAt,
+          },
+          update: {
+            tokenHash,
+            expiresAt,
+            usedAt: null,
+          },
+        });
 
-        activationToken,
-      };
-    });
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            actorUserId,
+            action: 'UPDATE',
+            entityType: 'Member',
+            entityId: member.id,
+            oldValue: {
+              memberNumber: member.memberNumber,
+              userId: null,
+              email: member.email,
+              activationStatus: member.activationStatus,
+            },
+            newValue: {
+              memberNumber: updatedMember.memberNumber,
+              userId: user.id,
+              email,
+              activationStatus: updatedMember.activationStatus,
+            },
+          },
+        });
+
+        return {
+          member: updatedMember,
+          activationToken,
+        };
+      },
+    );
 
     return {
       message: 'User account linked to the migrated member successfully.',
-
       member: this.toSafeMember(result.member),
-
       activationToken: result.activationToken,
-
       activationExpiresAt: expiresAt,
     };
   }
@@ -786,17 +775,10 @@ export class MembersService {
           },
         ],
       },
-
       include: {
         user: true,
       },
     });
-
-    /*
-     * ------------------------------------------------------------
-     * MEMBER MUST EXIST AND HAVE A LINKED USER
-     * ------------------------------------------------------------
-     */
 
     if (!member || !member.user) {
       throw new NotFoundException({
@@ -804,12 +786,6 @@ export class MembersService {
         message: 'No matching KUHRSA membership record was found.',
       });
     }
-
-    /*
-     * ------------------------------------------------------------
-     * EMAIL AND PHONE MUST MATCH THE REGISTERED RECORD
-     * ------------------------------------------------------------
-     */
 
     const storedEmail = member.user.email.trim().toLowerCase();
 
@@ -822,46 +798,25 @@ export class MembersService {
       });
     }
 
-    /*
-     * ------------------------------------------------------------
-     * ALREADY ACTIVE
-     * ------------------------------------------------------------
-     */
-
     if (
       member.activationStatus === MemberActivationStatus.COMPLETED ||
       member.user.status === UserStatus.ACTIVE
     ) {
       return {
         exists: true,
-
         eligible: false,
-
         code: 'ALREADY_ACTIVE',
-
         message: 'Your KUHRSA account is already active. Please log in.',
-
         member: {
           id: member.id,
-
           memberNumber: member.memberNumber,
-
           category: member.category,
-
           registrationNumber: member.registrationNumber,
-
           admissionNumber: member.admissionNumber,
-
           activationStatus: member.activationStatus,
         },
       };
     }
-
-    /*
-     * ------------------------------------------------------------
-     * ONLY MIGRATED MEMBERS CAN USE THIS ACTIVATION FLOW
-     * ------------------------------------------------------------
-     */
 
     if (
       member.source !== MemberSource.MIGRATION_IMPORT &&
@@ -869,72 +824,38 @@ export class MembersService {
     ) {
       return {
         exists: true,
-
         eligible: false,
-
         code: 'ACTIVATION_NOT_AVAILABLE',
-
         message:
           'This KUHRSA membership is not currently eligible for activation.',
-
         member: {
           id: member.id,
-
           memberNumber: member.memberNumber,
-
           category: member.category,
-
           registrationNumber: member.registrationNumber,
-
           admissionNumber: member.admissionNumber,
-
           activationStatus: member.activationStatus,
         },
       };
     }
-
-    /*
-     * ------------------------------------------------------------
-     * ACTIVATION MUST BE PENDING
-     * ------------------------------------------------------------
-     */
 
     if (member.activationStatus !== MemberActivationStatus.PENDING) {
       return {
         exists: true,
-
         eligible: false,
-
         code: 'ACTIVATION_NOT_AVAILABLE',
-
         message:
           'This KUHRSA membership is not currently eligible for activation.',
-
         member: {
           id: member.id,
-
           memberNumber: member.memberNumber,
-
           category: member.category,
-
           registrationNumber: member.registrationNumber,
-
           admissionNumber: member.admissionNumber,
-
           activationStatus: member.activationStatus,
         },
       };
     }
-
-    /*
-     * ------------------------------------------------------------
-     * CREATE A FRESH ACTIVATION SESSION
-     * ------------------------------------------------------------
-     *
-     * Only after the actual KUHRSA membership has been
-     * located and the registered email and phone have
-     * matched do we create a fresh activation token.
-     */
 
     const activationToken = randomBytes(32).toString('hex');
 
@@ -942,25 +863,19 @@ export class MembersService {
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.memberActivation.upsert({
         where: {
           memberId: member.id,
         },
-
         create: {
           memberId: member.id,
-
           tokenHash,
-
           expiresAt,
         },
-
         update: {
           tokenHash,
-
           expiresAt,
-
           usedAt: null,
         },
       });
@@ -969,7 +884,6 @@ export class MembersService {
         where: {
           id: member.id,
         },
-
         data: {
           activationStatus: MemberActivationStatus.PENDING,
         },
@@ -978,28 +892,17 @@ export class MembersService {
 
     return {
       exists: true,
-
       eligible: true,
-
       code: 'ELIGIBLE',
-
       message: 'KUHRSA membership record found. You may continue.',
-
       activationToken,
-
       activationExpiresAt: expiresAt,
-
       member: {
         id: member.id,
-
         memberNumber: member.memberNumber,
-
         category: member.category,
-
         registrationNumber: member.registrationNumber,
-
         admissionNumber: member.admissionNumber,
-
         activationStatus: MemberActivationStatus.PENDING,
       },
     };
@@ -1059,79 +962,66 @@ export class MembersService {
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    const activation = await this.prisma.$transaction(async (tx) => {
-      const activation = await tx.memberActivation.upsert({
-        where: {
-          memberId: member.id,
-        },
-
-        create: {
-          memberId: member.id,
-          tokenHash,
-          expiresAt,
-        },
-
-        update: {
-          tokenHash,
-          expiresAt,
-          usedAt: null,
-        },
-      });
-
-      await tx.member.update({
-        where: {
-          id: member.id,
-        },
-
-        data: {
-          activationStatus: MemberActivationStatus.PENDING,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          organizationId,
-          actorUserId,
-          action: 'UPDATE',
-          entityType: 'MemberActivation',
-          entityId: member.id,
-
-          oldValue: {
-            memberNumber: member.memberNumber,
-
-            activationStatus: member.activationStatus,
+    const activation = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const activation = await tx.memberActivation.upsert({
+          where: {
+            memberId: member.id,
           },
+          create: {
+            memberId: member.id,
+            tokenHash,
+            expiresAt,
+          },
+          update: {
+            tokenHash,
+            expiresAt,
+            usedAt: null,
+          },
+        });
 
-          newValue: {
-            memberNumber: member.memberNumber,
-
+        await tx.member.update({
+          where: {
+            id: member.id,
+          },
+          data: {
             activationStatus: MemberActivationStatus.PENDING,
-
-            activationExpiresAt: expiresAt,
           },
-        },
-      });
+        });
 
-      return activation;
-    });
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            actorUserId,
+            action: 'UPDATE',
+            entityType: 'MemberActivation',
+            entityId: member.id,
+            oldValue: {
+              memberNumber: member.memberNumber,
+              activationStatus: member.activationStatus,
+            },
+            newValue: {
+              memberNumber: member.memberNumber,
+              activationStatus: MemberActivationStatus.PENDING,
+              activationExpiresAt: expiresAt,
+            },
+          },
+        });
+
+        return activation;
+      },
+    );
 
     return {
       message: 'A new membership activation link has been generated.',
-
       member: {
         id: member.id,
-
         memberNumber: member.memberNumber,
-
         category: member.category,
-
         email: member.user.email,
-
         activationStatus: MemberActivationStatus.PENDING,
       },
-
       activationToken,
-
       activationExpiresAt: activation.expiresAt,
     };
   }
@@ -1148,12 +1038,10 @@ export class MembersService {
     const activations = await this.prisma.memberActivation.findMany({
       where: {
         usedAt: null,
-
         expiresAt: {
           gt: now,
         },
       },
-
       include: {
         member: {
           include: {
@@ -1171,7 +1059,6 @@ export class MembersService {
 
       if (matches) {
         matchedActivation = activation;
-
         break;
       }
     }
@@ -1200,18 +1087,12 @@ export class MembersService {
     ) {
       return {
         verified: false,
-
         code: 'ALREADY_ACTIVE',
-
         message: 'Your KUHRSA account is already active. Please log in.',
-
         member: {
           id: member.id,
-
           memberNumber: member.memberNumber,
-
           category: member.category,
-
           activationStatus: member.activationStatus,
         },
       };
@@ -1273,19 +1154,13 @@ export class MembersService {
 
     return {
       verified: true,
-
       code: 'VERIFIED',
-
       message:
         'Membership details verified successfully. You may now create your password.',
-
       member: {
         id: member.id,
-
         memberNumber: member.memberNumber,
-
         category: member.category,
-
         activationStatus: member.activationStatus,
       },
     };
@@ -1297,12 +1172,10 @@ export class MembersService {
     const activations = await this.prisma.memberActivation.findMany({
       where: {
         usedAt: null,
-
         expiresAt: {
           gt: now,
         },
       },
-
       include: {
         member: {
           include: {
@@ -1320,7 +1193,6 @@ export class MembersService {
 
       if (matches) {
         matchedActivation = activation;
-
         break;
       }
     }
@@ -1372,82 +1244,71 @@ export class MembersService {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const activated = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.update({
-        where: {
-          id: member.user!.id,
-        },
-
-        data: {
-          passwordHash,
-
-          status: UserStatus.ACTIVE,
-        },
-      });
-
-      const updatedMember = await tx.member.update({
-        where: {
-          id: member.id,
-        },
-
-        data: {
-          activationStatus: MemberActivationStatus.COMPLETED,
-        },
-
-        include: {
-          organization: true,
-
-          user: {
-            select: {
-              id: true,
-              email: true,
-              status: true,
-              isSystemOwner: true,
-            },
+    const activated = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const user = await tx.user.update({
+          where: {
+            id: member.user!.id,
           },
-        },
-      });
+          data: {
+            passwordHash,
+            status: UserStatus.ACTIVE,
+          },
+        });
 
-      await tx.memberActivation.update({
-        where: {
-          id: matchedActivation.id,
-        },
-
-        data: {
-          usedAt: new Date(),
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          organizationId: member.organizationId,
-
-          actorUserId: member.user?.id,
-
-          action: 'ACTIVATE',
-
-          entityType: 'MemberActivation',
-
-          entityId: member.id,
-
-          newValue: {
-            memberId: member.id,
-
-            memberNumber: member.memberNumber,
-
-            userId: user.id,
-
+        const updatedMember = await tx.member.update({
+          where: {
+            id: member.id,
+          },
+          data: {
             activationStatus: MemberActivationStatus.COMPLETED,
           },
-        },
-      });
+          include: {
+            organization: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                status: true,
+                isSystemOwner: true,
+              },
+            },
+          },
+        });
 
-      return updatedMember;
-    });
+        await tx.memberActivation.update({
+          where: {
+            id: matchedActivation.id,
+          },
+          data: {
+            usedAt: new Date(),
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            organizationId: member.organizationId,
+            actorUserId: member.user?.id,
+            action: 'ACTIVATE',
+            entityType: 'MemberActivation',
+            entityId: member.id,
+            newValue: {
+              memberId: member.id,
+              memberNumber: member.memberNumber,
+              userId: user.id,
+              activationStatus: MemberActivationStatus.COMPLETED,
+            },
+          },
+        });
+
+        return updatedMember;
+      },
+    );
 
     return {
       message: 'Membership activation completed successfully.',
-
       member: this.toSafeMember(activated),
     };
   }
@@ -1494,7 +1355,6 @@ export class MembersService {
         id,
         organizationId,
       },
-
       include: {
         user: true,
       },
@@ -1516,58 +1376,53 @@ export class MembersService {
       throw new ConflictException('Only pending members can be approved.');
     }
 
-    const updatedMember = await this.prisma.$transaction(async (tx) => {
-      const member = await tx.member.update({
-        where: {
-          id,
-        },
-
-        data: {
-          status,
-        },
-
-        include: {
-          organization: true,
-
-          user: {
-            select: {
-              id: true,
-              email: true,
-              status: true,
-              isSystemOwner: true,
+    const updatedMember = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const member = await tx.member.update({
+          where: {
+            id,
+          },
+          data: {
+            status,
+          },
+          include: {
+            organization: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                status: true,
+                isSystemOwner: true,
+              },
             },
           },
-        },
-      });
+        });
 
-      await tx.auditLog.create({
-        data: {
-          organizationId,
-          actorUserId,
-          action,
-          entityType: 'Member',
-          entityId: member.id,
-
-          oldValue: {
-            category: member.category,
-
-            memberNumber: member.memberNumber,
-
-            status: oldStatus,
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            actorUserId,
+            action,
+            entityType: 'Member',
+            entityId: member.id,
+            oldValue: {
+              category: member.category,
+              memberNumber: member.memberNumber,
+              status: oldStatus,
+            },
+            newValue: {
+              category: member.category,
+              memberNumber: member.memberNumber,
+              status: member.status,
+            },
           },
+        });
 
-          newValue: {
-            category: member.category,
-
-            memberNumber: member.memberNumber,
-
-            status: member.status,
-          },
-        },
-      });
-
-      return member;
-    });
+        return member;
+      },
+    );
 
     return this.toSafeMember(updatedMember);
   }
@@ -1589,6 +1444,8 @@ export class MembersService {
       yearOfStudy: member.yearOfStudy ?? null,
 
       graduationYear: member.graduationYear ?? null,
+
+      nationalId: member.nationalId ?? null,
 
       staffNumber: member.staffNumber ?? null,
 
@@ -1621,9 +1478,7 @@ export class MembersService {
       organization: member.organization
         ? {
             id: member.organization.id,
-
             name: member.organization.name,
-
             code: member.organization.code,
           }
         : null,
@@ -1631,6 +1486,10 @@ export class MembersService {
       user: member.user
         ? {
             id: member.user.id,
+
+            firstName: member.user.firstName ?? null,
+
+            lastName: member.user.lastName ?? null,
 
             email: member.user.email,
 
