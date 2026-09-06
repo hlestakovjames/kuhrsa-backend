@@ -17,14 +17,49 @@ export class NotificationsController {
     @Param('memberId') memberId: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    const notification =
+    const result =
       await this.notificationsService.sendMigrationWelcome(memberId);
 
     return {
-      message: notification
-        ? 'Migration welcome notification processed successfully.'
-        : 'Migration welcome notification was created but could not be delivered.',
-      notification,
+      message: 'Migration welcome notifications processed.',
+
+      result,
+
+      requestedBy: req.user.id,
+    };
+  }
+
+  @Post('members/:memberId/migration-welcome-sms')
+  @Permissions('members.manage')
+  async sendMigrationWelcomeSms(
+    @Param('memberId') memberId: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const result =
+      await this.notificationsService.sendMigrationWelcomeSmsOnly(memberId);
+
+    return {
+      message: 'Migration welcome SMS processed.',
+
+      notification: result,
+
+      requestedBy: req.user.id,
+    };
+  }
+
+  @Post(':id/retry')
+  @Permissions('members.manage')
+  async retry(
+    @Param('id') notificationId: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const result = await this.notificationsService.retry(notificationId);
+
+    return {
+      message: 'Notification retry processed.',
+
+      notification: result,
+
       requestedBy: req.user.id,
     };
   }

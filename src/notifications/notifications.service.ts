@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { CreateEmailOptions, Resend } from 'resend';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { SmsService } from './sms/sms.service';
 import { buildMigrationWelcomeTemplate } from './templates/migration-welcome.template';
 
 type NotificationType =
@@ -17,9 +18,20 @@ type NotificationChannel = 'EMAIL' | 'SMS' | 'IN_APP';
 type NotificationMetadata = {
   emailHtml?: string;
   emailText?: string;
+  smsText?: string;
   memberNumber?: string;
   category?: string;
+  providerStatus?: string;
+  providerCost?: string;
   [key: string]: string | undefined;
+};
+
+type NotificationSendResult = {
+  notificationId: string;
+  status: 'SENT' | 'FAILED';
+  providerMessageId: string | null;
+  recipient: string;
+  errorMessage: string | null;
 };
 
 @Injectable()
@@ -28,7 +40,10 @@ export class NotificationsService {
 
   private readonly resend: Resend | null;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly smsService: SmsService,
+  ) {
     const apiKey = process.env.RESEND_API_KEY?.trim();
 
     this.resend = apiKey ? new Resend(apiKey) : null;
@@ -125,7 +140,7 @@ export class NotificationsService {
 
     if (notification.channel !== 'EMAIL') {
       throw new Error(
-        `Channel ${notification.channel} is not yet supported by the email sender.`,
+        `Channel ${notification.channel} is not supported by the email sender.`,
       );
     }
 
@@ -218,9 +233,155 @@ export class NotificationsService {
 
       await this.markFailed(notification.id, message);
 
-      this.logger.error(`Notification ${notification.id} failed: ${message}`);
+      this.logger.error(
+        `Email notification ${notification.id} failed: ${message}`,
+      );
 
       return null;
+    }
+  }
+
+  async sendSmsNotification(
+    notificationId: string,
+  ): Promise<NotificationSendResult> {
+    const notification = await this.prisma.notification.findUnique({
+      where: {
+        id: notificationId,
+      },
+    });
+
+    if (!notification) {
+      throw new Error('Notification not found.');
+    }
+
+    if (notification.channel !== 'SMS') {
+      throw new Error(
+        `Channel ${notification.channel} is not supported by the SMS sender.`,
+      );
+    }
+
+    if (notification.status === 'SENT' && notification.providerMessageId) {
+      return {
+        notificationId: notification.id,
+
+        status: 'SENT',
+
+        providerMessageId: notification.providerMessageId,
+
+        recipient: notification.recipient,
+
+        errorMessage: null,
+      };
+    }
+
+    const metadata = this.getMetadata(notification.metadata);
+
+    if (!metadata.smsText) {
+      const message = 'Notification SMS content is missing.';
+
+      await this.markFailed(notification.id, message);
+
+      return {
+        notificationId: notification.id,
+
+        status: 'FAILED',
+
+        providerMessageId: null,
+
+        recipient: notification.recipient,
+
+        errorMessage: message,
+      };
+    }
+
+    const nextAttempts = notification.attempts + 1;
+
+    await this.prisma.notification.update({
+      where: {
+        id: notification.id,
+      },
+
+      data: {
+        attempts: nextAttempts,
+
+        status: 'PENDING',
+
+        errorMessage: null,
+
+        failedAt: null,
+      },
+    });
+
+    try {
+      const result = await this.smsService.send(
+        notification.recipient,
+        metadata.smsText,
+      );
+
+      if (!result.success) {
+        throw new Error(
+          result.message || "Africa's Talking did not accept the SMS.",
+        );
+      }
+
+      await this.prisma.notification.update({
+        where: {
+          id: notification.id,
+        },
+
+        data: {
+          status: 'SENT',
+
+          sentAt: new Date(),
+
+          providerMessageId: result.messageId,
+
+          errorMessage: null,
+
+          failedAt: null,
+
+          metadata: {
+            ...metadata,
+
+            providerStatus: result.status ?? '',
+
+            providerCost: result.cost ?? '',
+          },
+        },
+      });
+
+      return {
+        notificationId: notification.id,
+
+        status: 'SENT',
+
+        providerMessageId: result.messageId,
+
+        recipient: notification.recipient,
+
+        errorMessage: null,
+      };
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown SMS delivery error.';
+
+      await this.markFailed(notification.id, message);
+
+      this.logger.error(
+        `SMS notification ${notification.id} failed: ${message}`,
+      );
+
+      return {
+        notificationId: notification.id,
+
+        status: 'FAILED',
+
+        providerMessageId: null,
+
+        recipient: notification.recipient,
+
+        errorMessage: message,
+      };
     }
   }
 
@@ -255,14 +416,6 @@ export class NotificationsService {
       throw new Error('Member not found.');
     }
 
-    const recipient = member.email ?? member.user?.email ?? null;
-
-    if (!recipient) {
-      throw new Error(
-        `Member ${member.memberNumber} does not have an email address.`,
-      );
-    }
-
     const firstName = member.user?.firstName?.trim() || 'KUHRSA Member';
 
     const lastName = member.user?.lastName?.trim() || '';
@@ -291,6 +444,141 @@ export class NotificationsService {
       activationUrl,
     });
 
+    const results: {
+      email: NotificationSendResult | null;
+
+      sms: NotificationSendResult | null;
+    } = {
+      email: null,
+      sms: null,
+    };
+
+    const emailRecipient = member.email ?? member.user?.email ?? null;
+
+    if (emailRecipient) {
+      const emailNotification = await this.createNotification({
+        organizationId: member.organizationId,
+
+        memberId: member.id,
+
+        userId: member.userId ?? undefined,
+
+        type: 'MIGRATION_WELCOME',
+
+        channel: 'EMAIL',
+
+        recipient: emailRecipient,
+
+        subject: template.subject,
+
+        templateKey: 'migration-welcome',
+
+        metadata: {
+          emailHtml: template.html,
+
+          emailText: template.text,
+
+          memberNumber: member.memberNumber,
+
+          category: member.category,
+        },
+      });
+
+      const emailResult = await this.sendNotification(emailNotification.id);
+
+      results.email = emailResult
+        ? {
+            notificationId: emailResult.id,
+
+            status: emailResult.status === 'SENT' ? 'SENT' : 'FAILED',
+
+            providerMessageId: emailResult.providerMessageId,
+
+            recipient: emailRecipient,
+
+            errorMessage: emailResult.errorMessage ?? null,
+          }
+        : {
+            notificationId: emailNotification.id,
+
+            status: 'FAILED',
+
+            providerMessageId: null,
+
+            recipient: emailRecipient,
+
+            errorMessage: 'Email delivery failed.',
+          };
+    }
+
+    if (member.phone) {
+      const smsText = `KUHRSA: Your membership has been migrated successfully. Member No: ${member.memberNumber}. Activate your account: ${activationUrl}`;
+
+      const smsNotification = await this.createNotification({
+        organizationId: member.organizationId,
+
+        memberId: member.id,
+
+        userId: member.userId ?? undefined,
+
+        type: 'MIGRATION_WELCOME',
+
+        channel: 'SMS',
+
+        recipient: member.phone,
+
+        subject: 'KUHRSA Membership Migration',
+
+        templateKey: 'migration-welcome-sms',
+
+        metadata: {
+          smsText,
+
+          memberNumber: member.memberNumber,
+
+          category: member.category,
+        },
+      });
+
+      results.sms = await this.sendSmsNotification(smsNotification.id);
+    }
+
+    return {
+      memberId: member.id,
+
+      memberNumber: member.memberNumber,
+
+      email: results.email,
+
+      sms: results.sms,
+    };
+  }
+
+  async sendMigrationWelcomeSmsOnly(
+    memberId: string,
+  ): Promise<NotificationSendResult> {
+    const member = await this.prisma.member.findUnique({
+      where: {
+        id: memberId,
+      },
+    });
+
+    if (!member) {
+      throw new Error('Member not found.');
+    }
+
+    if (!member.phone) {
+      throw new Error(
+        `Member ${member.memberNumber} does not have a phone number.`,
+      );
+    }
+
+    const activationUrl = `${this.getApplicationUrl()}/activate-membership?member=${encodeURIComponent(
+      member.memberNumber,
+    )}`;
+
+    const smsText = `KUHRSA: Your membership has been migrated successfully. Member No: ${member.memberNumber}. Activate your account: ${activationUrl}`;
+
     const notification = await this.createNotification({
       organizationId: member.organizationId,
 
@@ -300,18 +588,16 @@ export class NotificationsService {
 
       type: 'MIGRATION_WELCOME',
 
-      channel: 'EMAIL',
+      channel: 'SMS',
 
-      recipient,
+      recipient: member.phone,
 
-      subject: template.subject,
+      subject: 'KUHRSA Membership Migration',
 
-      templateKey: 'migration-welcome',
+      templateKey: 'migration-welcome-sms',
 
       metadata: {
-        emailHtml: template.html,
-
-        emailText: template.text,
+        smsText,
 
         memberNumber: member.memberNumber,
 
@@ -319,7 +605,7 @@ export class NotificationsService {
       },
     });
 
-    return this.sendNotification(notification.id);
+    return this.sendSmsNotification(notification.id);
   }
 
   async findById(notificationId: string) {
@@ -360,12 +646,22 @@ export class NotificationsService {
       throw new Error('Notification not found.');
     }
 
-    const status = notification.status;
+    if (notification.channel === 'EMAIL') {
+      const result = await this.sendNotification(notification.id);
 
-    if (status !== 'FAILED' && status !== 'PENDING') {
-      throw new Error('Only pending or failed notifications can be retried.');
+      if (!result) {
+        return null;
+      }
+
+      return result;
     }
 
-    return this.sendNotification(notification.id);
+    if (notification.channel === 'SMS') {
+      return this.sendSmsNotification(notification.id);
+    }
+
+    throw new Error(
+      `Notification channel ${notification.channel} is not supported for retry yet.`,
+    );
   }
 }
