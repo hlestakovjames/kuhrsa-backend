@@ -1,38 +1,34 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { CreateEmailOptions, Resend } from 'resend';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Resend } from 'resend';
+
+import {
+  NotificationChannel,
+  NotificationStatus,
+  NotificationType,
+  Prisma,
+} from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+
+import { NotificationQueryDto } from './dto/notification-query.dto';
 import { SmsService } from './sms/sms.service';
 import { buildMigrationWelcomeTemplate } from './templates/migration-welcome.template';
 
-type NotificationType =
-  | 'MIGRATION_WELCOME'
-  | 'ACCOUNT_ACTIVATED'
-  | 'MEMBERSHIP_RENEWAL'
-  | 'PAYMENT_CONFIRMATION'
-  | 'PASSWORD_RESET'
-  | 'GENERAL_NOTICE';
-
-type NotificationChannel = 'EMAIL' | 'SMS' | 'IN_APP';
-
-type NotificationMetadata = {
-  emailHtml?: string;
-  emailText?: string;
-  smsText?: string;
-  memberNumber?: string;
-  category?: string;
-  providerStatus?: string;
-  providerCost?: string;
-  [key: string]: string | undefined;
-};
-
-type NotificationSendResult = {
-  notificationId: string;
-  status: 'SENT' | 'FAILED';
-  providerMessageId: string | null;
-  recipient: string;
-  errorMessage: string | null;
-};
+interface MigrationMember {
+  id: string;
+  memberNumber: string;
+  category: string;
+  email: string | null;
+  phone: string | null;
+  registrationNumber: string | null;
+  nationalId: string | null;
+  staffNumber: string | null;
+  organizationId: string;
+  user: {
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+}
 
 @Injectable()
 export class NotificationsService {
@@ -50,38 +46,45 @@ export class NotificationsService {
   }
 
   private getApplicationUrl(): string {
-    const configuredUrl = process.env.FRONTEND_URL?.trim();
-
-    return configuredUrl?.replace(/\/+$/, '') || 'http://localhost:3000';
+    return process.env.FRONTEND_URL?.trim() || 'http://localhost:3000';
   }
 
   private getEmailFrom(): string {
     return process.env.EMAIL_FROM?.trim() || 'KUHRSA <onboarding@resend.dev>';
   }
 
-  private getMetadata(metadata: unknown): NotificationMetadata {
-    if (
-      typeof metadata !== 'object' ||
-      metadata === null ||
-      Array.isArray(metadata)
-    ) {
-      return {};
+  private async getMigrationMember(memberId: string): Promise<MigrationMember> {
+    const member = await this.prisma.member.findUnique({
+      where: {
+        id: memberId,
+      },
+      select: {
+        id: true,
+        memberNumber: true,
+        category: true,
+        email: true,
+        phone: true,
+        registrationNumber: true,
+        nationalId: true,
+        staffNumber: true,
+        organizationId: true,
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Member not found.');
     }
 
-    const record = metadata as Record<string, unknown>;
-
-    const result: NotificationMetadata = {};
-
-    for (const [key, value] of Object.entries(record)) {
-      if (typeof value === 'string') {
-        result[key] = value;
-      }
-    }
-
-    return result;
+    return member;
   }
 
-  async createNotification(params: {
+  private async createNotification(data: {
     organizationId: string;
     memberId?: string;
     userId?: string;
@@ -90,29 +93,20 @@ export class NotificationsService {
     recipient: string;
     subject?: string;
     templateKey?: string;
-    metadata?: NotificationMetadata;
+    metadata?: Prisma.InputJsonValue;
   }) {
     return this.prisma.notification.create({
       data: {
-        organizationId: params.organizationId,
-
-        memberId: params.memberId,
-
-        userId: params.userId,
-
-        type: params.type,
-
-        channel: params.channel,
-
-        status: 'PENDING',
-
-        recipient: params.recipient,
-
-        subject: params.subject,
-
-        templateKey: params.templateKey,
-
-        metadata: params.metadata ? params.metadata : undefined,
+        organizationId: data.organizationId,
+        memberId: data.memberId,
+        userId: data.userId,
+        type: data.type,
+        channel: data.channel,
+        status: NotificationStatus.PENDING,
+        recipient: data.recipient,
+        subject: data.subject,
+        templateKey: data.templateKey,
+        metadata: data.metadata,
       },
     });
   }
@@ -122,128 +116,115 @@ export class NotificationsService {
       where: {
         id: notificationId,
       },
-
-      include: {
-        member: {
-          include: {
-            user: true,
-          },
-        },
-
-        user: true,
-      },
     });
 
     if (!notification) {
-      throw new Error('Notification not found.');
+      throw new NotFoundException('Notification not found.');
     }
 
-    if (notification.channel !== 'EMAIL') {
-      throw new Error(
-        `Channel ${notification.channel} is not supported by the email sender.`,
-      );
-    }
-
-    if (notification.status === 'SENT' && notification.providerMessageId) {
-      return notification;
+    if (notification.channel !== NotificationChannel.EMAIL) {
+      throw new Error('This notification is not an email notification.');
     }
 
     if (!this.resend) {
-      await this.markFailed(
-        notification.id,
-        'RESEND_API_KEY is not configured.',
-      );
-
-      return null;
+      throw new Error('RESEND_API_KEY is not configured.');
     }
-
-    const nextAttempts = notification.attempts + 1;
 
     await this.prisma.notification.update({
       where: {
         id: notification.id,
       },
-
       data: {
-        attempts: nextAttempts,
-
-        status: 'PENDING',
-
-        errorMessage: null,
-
-        failedAt: null,
+        attempts: {
+          increment: 1,
+        },
       },
     });
 
     try {
-      if (!notification.subject) {
-        throw new Error('Notification subject is required.');
-      }
+      const metadata =
+        notification.metadata &&
+        typeof notification.metadata === 'object' &&
+        !Array.isArray(notification.metadata)
+          ? notification.metadata
+          : {};
 
-      const metadata = this.getMetadata(notification.metadata);
+      const html =
+        typeof metadata.html === 'string'
+          ? metadata.html
+          : '<p>This is a KUHRSA notification.</p>';
 
-      if (!metadata.emailHtml && !metadata.emailText) {
-        throw new Error('Notification email content is missing.');
-      }
+      const text =
+        typeof metadata.text === 'string'
+          ? metadata.text
+          : 'This is a KUHRSA notification.';
 
-      const emailPayload: CreateEmailOptions = {
+      const subject = notification.subject || 'KUHRSA Notification';
+
+      const result = await this.resend.emails.send({
         from: this.getEmailFrom(),
+        to: notification.recipient,
+        subject,
+        html,
+        text,
+      });
 
-        to: [notification.recipient],
-
-        subject: notification.subject,
-
-        html: metadata.emailHtml ?? '',
-
-        text: metadata.emailText ?? '',
-      };
-
-      const emailResult = await this.resend.emails.send(emailPayload);
-
-      if (emailResult.error) {
-        throw new Error(
-          emailResult.error.message || 'Resend rejected the email.',
-        );
+      if (result.error) {
+        throw new Error(result.error.message);
       }
 
-      const providerMessageId = emailResult.data?.id ?? null;
-
-      return this.prisma.notification.update({
+      await this.prisma.notification.update({
         where: {
           id: notification.id,
         },
-
         data: {
-          status: 'SENT',
-
+          status: NotificationStatus.SENT,
           sentAt: new Date(),
-
-          providerMessageId,
-
-          errorMessage: null,
-
           failedAt: null,
+          errorMessage: null,
+          providerMessageId: result.data?.id || null,
         },
       });
-    } catch (error: unknown) {
-      const message =
+
+      return {
+        notificationId: notification.id,
+        status: NotificationStatus.SENT,
+        providerMessageId: result.data?.id || null,
+        recipient: notification.recipient,
+        errorMessage: null,
+      };
+    } catch (error) {
+      const errorMessage =
         error instanceof Error
           ? error.message
           : 'Unknown email delivery error.';
 
-      await this.markFailed(notification.id, message);
+      await this.prisma.notification.update({
+        where: {
+          id: notification.id,
+        },
+        data: {
+          status: NotificationStatus.FAILED,
+          failedAt: new Date(),
+          errorMessage,
+        },
+      });
 
       this.logger.error(
-        `Email notification ${notification.id} failed: ${message}`,
+        `Email notification ${notification.id} failed: ${errorMessage}`,
       );
 
-      return null;
+      return {
+        notificationId: notification.id,
+        status: NotificationStatus.FAILED,
+        providerMessageId: null,
+        recipient: notification.recipient,
+        errorMessage,
+      };
     }
   }
 
-  async sendSmsNotification(
-    notificationId: string,
-  ): Promise<NotificationSendResult> {
+  async sendSmsNotification(notificationId: string) {
     const notification = await this.prisma.notification.findUnique({
       where: {
         id: notificationId,
@@ -251,388 +232,481 @@ export class NotificationsService {
     });
 
     if (!notification) {
-      throw new Error('Notification not found.');
+      throw new NotFoundException('Notification not found.');
     }
 
-    if (notification.channel !== 'SMS') {
-      throw new Error(
-        `Channel ${notification.channel} is not supported by the SMS sender.`,
-      );
+    if (notification.channel !== NotificationChannel.SMS) {
+      throw new Error('This notification is not an SMS notification.');
     }
 
-    if (notification.status === 'SENT' && notification.providerMessageId) {
-      return {
-        notificationId: notification.id,
+    const metadata =
+      notification.metadata &&
+      typeof notification.metadata === 'object' &&
+      !Array.isArray(notification.metadata)
+        ? notification.metadata
+        : {};
 
-        status: 'SENT',
+    const smsText =
+      typeof metadata.smsText === 'string' ? metadata.smsText : '';
 
-        providerMessageId: notification.providerMessageId,
-
-        recipient: notification.recipient,
-
-        errorMessage: null,
-      };
+    if (!smsText) {
+      throw new Error('SMS notification message is missing.');
     }
-
-    const metadata = this.getMetadata(notification.metadata);
-
-    if (!metadata.smsText) {
-      const message = 'Notification SMS content is missing.';
-
-      await this.markFailed(notification.id, message);
-
-      return {
-        notificationId: notification.id,
-
-        status: 'FAILED',
-
-        providerMessageId: null,
-
-        recipient: notification.recipient,
-
-        errorMessage: message,
-      };
-    }
-
-    const nextAttempts = notification.attempts + 1;
 
     await this.prisma.notification.update({
       where: {
         id: notification.id,
       },
-
       data: {
-        attempts: nextAttempts,
-
-        status: 'PENDING',
-
-        errorMessage: null,
-
-        failedAt: null,
+        attempts: {
+          increment: 1,
+        },
       },
     });
 
     try {
       const result = await this.smsService.send(
         notification.recipient,
-        metadata.smsText,
+        smsText,
       );
 
+      const updatedMetadata = {
+        ...metadata,
+        smsProviderStatus: result.status,
+        smsProviderNumber: result.number,
+        smsProviderCost: result.cost,
+        smsProviderMessage: result.message,
+      };
+
       if (!result.success) {
-        throw new Error(
-          result.message || "Africa's Talking did not accept the SMS.",
-        );
+        const errorMessage =
+          result.message || "Africa's Talking rejected the SMS request.";
+
+        await this.prisma.notification.update({
+          where: {
+            id: notification.id,
+          },
+          data: {
+            status: NotificationStatus.FAILED,
+            failedAt: new Date(),
+            errorMessage,
+            providerMessageId: result.messageId,
+            metadata: updatedMetadata,
+          },
+        });
+
+        return {
+          notificationId: notification.id,
+          status: NotificationStatus.FAILED,
+          providerMessageId: result.messageId,
+          recipient: notification.recipient,
+          errorMessage,
+        };
       }
 
       await this.prisma.notification.update({
         where: {
           id: notification.id,
         },
-
         data: {
-          status: 'SENT',
-
+          status: NotificationStatus.SENT,
           sentAt: new Date(),
-
-          providerMessageId: result.messageId,
-
-          errorMessage: null,
-
           failedAt: null,
-
-          metadata: {
-            ...metadata,
-
-            providerStatus: result.status ?? '',
-
-            providerCost: result.cost ?? '',
-          },
+          errorMessage: null,
+          providerMessageId: result.messageId,
+          metadata: updatedMetadata,
         },
       });
 
       return {
         notificationId: notification.id,
-
-        status: 'SENT',
-
+        status: NotificationStatus.SENT,
         providerMessageId: result.messageId,
-
         recipient: notification.recipient,
-
         errorMessage: null,
       };
-    } catch (error: unknown) {
-      const message =
+    } catch (error) {
+      const errorMessage =
         error instanceof Error ? error.message : 'Unknown SMS delivery error.';
 
-      await this.markFailed(notification.id, message);
+      await this.prisma.notification.update({
+        where: {
+          id: notification.id,
+        },
+        data: {
+          status: NotificationStatus.FAILED,
+          failedAt: new Date(),
+          errorMessage,
+        },
+      });
 
       this.logger.error(
-        `SMS notification ${notification.id} failed: ${message}`,
+        `SMS notification ${notification.id} failed: ${errorMessage}`,
       );
 
       return {
         notificationId: notification.id,
-
-        status: 'FAILED',
-
+        status: NotificationStatus.FAILED,
         providerMessageId: null,
-
         recipient: notification.recipient,
-
-        errorMessage: message,
+        errorMessage,
       };
     }
-  }
-
-  private async markFailed(notificationId: string, message: string) {
-    return this.prisma.notification.update({
-      where: {
-        id: notificationId,
-      },
-
-      data: {
-        status: 'FAILED',
-
-        failedAt: new Date(),
-
-        errorMessage: message,
-      },
-    });
   }
 
   async sendMigrationWelcome(memberId: string) {
-    const member = await this.prisma.member.findUnique({
-      where: {
-        id: memberId,
-      },
+    const member = await this.getMigrationMember(memberId);
 
-      include: {
-        user: true,
-      },
-    });
-
-    if (!member) {
-      throw new Error('Member not found.');
-    }
-
-    const firstName = member.user?.firstName?.trim() || 'KUHRSA Member';
+    const firstName = member.user?.firstName?.trim() || 'Member';
 
     const lastName = member.user?.lastName?.trim() || '';
 
-    const identifier =
-      member.registrationNumber ??
-      member.staffNumber ??
-      member.admissionNumber ??
-      'Membership record';
-
     const activationUrl = `${this.getApplicationUrl()}/activate-membership?member=${encodeURIComponent(
       member.memberNumber,
     )}`;
+
+    const identifier =
+      member.registrationNumber ||
+      member.staffNumber ||
+      member.nationalId ||
+      member.memberNumber;
 
     const template = buildMigrationWelcomeTemplate({
       firstName,
-
       lastName,
-
       memberNumber: member.memberNumber,
-
       category: member.category,
-
       identifier,
-
       activationUrl,
     });
 
-    const results: {
-      email: NotificationSendResult | null;
+    const results: Array<unknown> = [];
 
-      sms: NotificationSendResult | null;
-    } = {
-      email: null,
-      sms: null,
-    };
-
-    const emailRecipient = member.email ?? member.user?.email ?? null;
-
-    if (emailRecipient) {
-      const emailNotification = await this.createNotification({
+    if (member.email) {
+      const notification = await this.createNotification({
         organizationId: member.organizationId,
-
         memberId: member.id,
-
-        userId: member.userId ?? undefined,
-
-        type: 'MIGRATION_WELCOME',
-
-        channel: 'EMAIL',
-
-        recipient: emailRecipient,
-
+        userId: undefined,
+        type: NotificationType.MIGRATION_WELCOME,
+        channel: NotificationChannel.EMAIL,
+        recipient: member.email,
         subject: template.subject,
-
         templateKey: 'migration-welcome',
-
         metadata: {
-          emailHtml: template.html,
-
-          emailText: template.text,
-
-          memberNumber: member.memberNumber,
-
-          category: member.category,
+          html: template.html,
+          text: template.text,
         },
       });
 
-      const emailResult = await this.sendNotification(emailNotification.id);
-
-      results.email = emailResult
-        ? {
-            notificationId: emailResult.id,
-
-            status: emailResult.status === 'SENT' ? 'SENT' : 'FAILED',
-
-            providerMessageId: emailResult.providerMessageId,
-
-            recipient: emailRecipient,
-
-            errorMessage: emailResult.errorMessage ?? null,
-          }
-        : {
-            notificationId: emailNotification.id,
-
-            status: 'FAILED',
-
-            providerMessageId: null,
-
-            recipient: emailRecipient,
-
-            errorMessage: 'Email delivery failed.',
-          };
+      results.push(await this.sendNotification(notification.id));
     }
 
     if (member.phone) {
-      const smsText = `KUHRSA: Your membership has been migrated successfully. Member No: ${member.memberNumber}. Activate your account: ${activationUrl}`;
+      const smsText =
+        `KUHRSA: Membership migrated. ` +
+        `Member No: ${member.memberNumber}. ` +
+        `Activate: ${activationUrl}`;
 
-      const smsNotification = await this.createNotification({
+      const notification = await this.createNotification({
         organizationId: member.organizationId,
-
         memberId: member.id,
-
-        userId: member.userId ?? undefined,
-
-        type: 'MIGRATION_WELCOME',
-
-        channel: 'SMS',
-
+        type: NotificationType.MIGRATION_WELCOME,
+        channel: NotificationChannel.SMS,
         recipient: member.phone,
-
-        subject: 'KUHRSA Membership Migration',
-
         templateKey: 'migration-welcome-sms',
-
         metadata: {
           smsText,
-
-          memberNumber: member.memberNumber,
-
-          category: member.category,
         },
       });
 
-      results.sms = await this.sendSmsNotification(smsNotification.id);
+      results.push(await this.sendSmsNotification(notification.id));
     }
 
-    return {
-      memberId: member.id,
-
-      memberNumber: member.memberNumber,
-
-      email: results.email,
-
-      sms: results.sms,
-    };
+    return results;
   }
 
-  async sendMigrationWelcomeSmsOnly(
-    memberId: string,
-  ): Promise<NotificationSendResult> {
-    const member = await this.prisma.member.findUnique({
-      where: {
-        id: memberId,
-      },
-    });
-
-    if (!member) {
-      throw new Error('Member not found.');
-    }
+  async sendMigrationWelcomeSmsOnly(memberId: string) {
+    const member = await this.getMigrationMember(memberId);
 
     if (!member.phone) {
-      throw new Error(
-        `Member ${member.memberNumber} does not have a phone number.`,
-      );
+      throw new Error('Member does not have a phone number.');
     }
 
     const activationUrl = `${this.getApplicationUrl()}/activate-membership?member=${encodeURIComponent(
       member.memberNumber,
     )}`;
 
-    const smsText = `KUHRSA: Your membership has been migrated successfully. Member No: ${member.memberNumber}. Activate your account: ${activationUrl}`;
+    const smsText =
+      `KUHRSA: Membership migrated. ` +
+      `Member No: ${member.memberNumber}. ` +
+      `Activate: ${activationUrl}`;
 
     const notification = await this.createNotification({
       organizationId: member.organizationId,
-
       memberId: member.id,
-
-      userId: member.userId ?? undefined,
-
-      type: 'MIGRATION_WELCOME',
-
-      channel: 'SMS',
-
+      type: NotificationType.MIGRATION_WELCOME,
+      channel: NotificationChannel.SMS,
       recipient: member.phone,
-
-      subject: 'KUHRSA Membership Migration',
-
       templateKey: 'migration-welcome-sms',
-
       metadata: {
         smsText,
-
-        memberNumber: member.memberNumber,
-
-        category: member.category,
       },
     });
 
     return this.sendSmsNotification(notification.id);
   }
 
-  async findById(notificationId: string) {
-    return this.prisma.notification.findUnique({
+  async findAll(query: NotificationQueryDto) {
+    const page = Math.max(Number(query.page) || 1, 1);
+
+    const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
+
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.NotificationWhereInput = {};
+
+    if (query.type) {
+      where.type = query.type;
+    }
+
+    if (query.channel) {
+      where.channel = query.channel;
+    }
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.memberId) {
+      where.memberId = query.memberId;
+    }
+
+    if (query.userId) {
+      where.userId = query.userId;
+    }
+
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+
+      where.OR = [
+        {
+          recipient: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          subject: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          errorMessage: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+      ];
+    }
+
+    if (query.from || query.to) {
+      const createdAt: Prisma.DateTimeFilter = {};
+
+      if (query.from) {
+        const from = new Date(query.from);
+
+        if (!Number.isNaN(from.getTime())) {
+          createdAt.gte = from;
+        }
+      }
+
+      if (query.to) {
+        const to = new Date(query.to);
+
+        if (!Number.isNaN(to.getTime())) {
+          createdAt.lte = to;
+        }
+      }
+
+      where.createdAt = createdAt;
+    }
+
+    const [notifications, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take: limit,
+        include: {
+          member: {
+            select: {
+              id: true,
+              memberNumber: true,
+              user: {
+                select: {
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      }),
+
+      this.prisma.notification.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data: notifications,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findOne(notificationId: string) {
+    const notification = await this.prisma.notification.findUnique({
       where: {
         id: notificationId,
       },
-
       include: {
         member: {
           select: {
             id: true,
             memberNumber: true,
-            category: true,
+            email: true,
+            phone: true,
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
           },
         },
-
         user: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
             email: true,
+            phone: true,
+          },
+        },
+        organization: {
+          select: {
+            id: true,
+            name: true,
           },
         },
       },
     });
+
+    if (!notification) {
+      throw new NotFoundException('Notification not found.');
+    }
+
+    return notification;
+  }
+
+  async findByMember(memberId: string, query: NotificationQueryDto) {
+    const member = await this.prisma.member.findUnique({
+      where: {
+        id: memberId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Member not found.');
+    }
+
+    return this.findAll({
+      ...query,
+      memberId,
+    });
+  }
+
+  async getSummary() {
+    const [total, sent, failed, pending, cancelled, email, sms, inApp] =
+      await Promise.all([
+        this.prisma.notification.count(),
+
+        this.prisma.notification.count({
+          where: {
+            status: NotificationStatus.SENT,
+          },
+        }),
+
+        this.prisma.notification.count({
+          where: {
+            status: NotificationStatus.FAILED,
+          },
+        }),
+
+        this.prisma.notification.count({
+          where: {
+            status: NotificationStatus.PENDING,
+          },
+        }),
+
+        this.prisma.notification.count({
+          where: {
+            status: NotificationStatus.CANCELLED,
+          },
+        }),
+
+        this.prisma.notification.count({
+          where: {
+            channel: NotificationChannel.EMAIL,
+          },
+        }),
+
+        this.prisma.notification.count({
+          where: {
+            channel: NotificationChannel.SMS,
+          },
+        }),
+
+        this.prisma.notification.count({
+          where: {
+            channel: NotificationChannel.IN_APP,
+          },
+        }),
+      ]);
+
+    return {
+      total,
+      statuses: {
+        sent,
+        failed,
+        pending,
+        cancelled,
+      },
+      channels: {
+        email,
+        sms,
+        inApp,
+      },
+    };
   }
 
   async retry(notificationId: string) {
@@ -643,25 +717,26 @@ export class NotificationsService {
     });
 
     if (!notification) {
-      throw new Error('Notification not found.');
+      throw new NotFoundException('Notification not found.');
     }
 
-    if (notification.channel === 'EMAIL') {
-      const result = await this.sendNotification(notification.id);
-
-      if (!result) {
-        return null;
-      }
-
-      return result;
+    if (
+      notification.status !== NotificationStatus.FAILED &&
+      notification.status !== NotificationStatus.PENDING
+    ) {
+      throw new Error('Only failed or pending notifications can be retried.');
     }
 
-    if (notification.channel === 'SMS') {
+    if (notification.channel === NotificationChannel.EMAIL) {
+      return this.sendNotification(notification.id);
+    }
+
+    if (notification.channel === NotificationChannel.SMS) {
       return this.sendSmsNotification(notification.id);
     }
 
     throw new Error(
-      `Notification channel ${notification.channel} is not supported for retry yet.`,
+      `Retry is not currently supported for ${notification.channel} notifications.`,
     );
   }
 }
