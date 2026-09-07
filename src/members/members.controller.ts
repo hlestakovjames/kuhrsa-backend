@@ -14,6 +14,8 @@ import { Permissions } from '../auth/decorators/permissions/permissions.decorato
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 
+import { MemberSource } from '../../generated/prisma/client';
+
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LinkMemberAccountDto } from './dto/link-member-account.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
@@ -57,6 +59,7 @@ export class MembersController {
       req.user.organizationId,
       req.user.id,
       dto,
+      MemberSource.MANUAL_ENTRY,
     );
   }
 

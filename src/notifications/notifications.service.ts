@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Resend } from 'resend';
 
 import {
+  MemberSource,
   NotificationChannel,
   NotificationStatus,
   NotificationType,
@@ -12,9 +13,10 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { SmsService } from './sms/sms.service';
+import { buildMemberWelcomeTemplate } from './templates/member-welcome.template';
 import { buildMigrationWelcomeTemplate } from './templates/migration-welcome.template';
 
-interface MigrationMember {
+interface MemberNotificationRecord {
   id: string;
   memberNumber: string;
   category: string;
@@ -24,6 +26,7 @@ interface MigrationMember {
   nationalId: string | null;
   staffNumber: string | null;
   organizationId: string;
+  source: MemberSource;
   user: {
     firstName: string | null;
     lastName: string | null;
@@ -53,7 +56,7 @@ export class NotificationsService {
     return process.env.EMAIL_FROM?.trim() || 'KUHRSA <onboarding@resend.dev>';
   }
 
-  private async getMigrationMember(memberId: string): Promise<MigrationMember> {
+  private async getMember(memberId: string): Promise<MemberNotificationRecord> {
     const member = await this.prisma.member.findUnique({
       where: {
         id: memberId,
@@ -68,6 +71,7 @@ export class NotificationsService {
         nationalId: true,
         staffNumber: true,
         organizationId: true,
+        source: true,
         user: {
           select: {
             firstName: true,
@@ -126,10 +130,6 @@ export class NotificationsService {
       throw new Error('This notification is not an email notification.');
     }
 
-    if (!this.resend) {
-      throw new Error('RESEND_API_KEY is not configured.');
-    }
-
     await this.prisma.notification.update({
       where: {
         id: notification.id,
@@ -142,6 +142,10 @@ export class NotificationsService {
     });
 
     try {
+      if (!this.resend) {
+        throw new Error('RESEND_API_KEY is not configured.');
+      }
+
       const metadata =
         notification.metadata &&
         typeof notification.metadata === 'object' &&
@@ -354,8 +358,69 @@ export class NotificationsService {
     }
   }
 
+  async sendMemberWelcome(memberId: string) {
+    const member = await this.getMember(memberId);
+
+    if (member.source !== MemberSource.MANUAL_ENTRY) {
+      throw new Error(
+        'Member welcome notifications are only available for manually entered members.',
+      );
+    }
+
+    if (!member.email) {
+      throw new Error('Member does not have an email address.');
+    }
+
+    const firstName = member.user?.firstName?.trim() || 'Member';
+    const lastName = member.user?.lastName?.trim() || '';
+
+    const activationUrl = `${this.getApplicationUrl()}/activate-membership?member=${encodeURIComponent(
+      member.memberNumber,
+    )}`;
+
+    const identifier =
+      member.registrationNumber ||
+      member.staffNumber ||
+      member.nationalId ||
+      member.memberNumber;
+
+    const template = buildMemberWelcomeTemplate({
+      firstName,
+      lastName,
+      memberNumber: member.memberNumber,
+      category: member.category,
+      identifier,
+      activationUrl,
+    });
+
+    const notification = await this.createNotification({
+      organizationId: member.organizationId,
+      memberId: member.id,
+      type: NotificationType.MEMBER_WELCOME,
+      channel: NotificationChannel.EMAIL,
+      recipient: member.email,
+      subject: template.subject,
+      templateKey: 'member-welcome',
+      metadata: {
+        html: template.html,
+        text: template.text,
+      },
+    });
+
+    return this.sendNotification(notification.id);
+  }
+
   async sendMigrationWelcome(memberId: string) {
-    const member = await this.getMigrationMember(memberId);
+    const member = await this.getMember(memberId);
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      throw new Error(
+        'Migration welcome notifications are only available for migrated members.',
+      );
+    }
 
     const firstName = member.user?.firstName?.trim() || 'Member';
 
@@ -426,7 +491,16 @@ export class NotificationsService {
   }
 
   async sendMigrationWelcomeSmsOnly(memberId: string) {
-    const member = await this.getMigrationMember(memberId);
+    const member = await this.getMember(memberId);
+
+    if (
+      member.source !== MemberSource.MIGRATION_IMPORT &&
+      member.source !== MemberSource.MIGRATION_MANUAL
+    ) {
+      throw new Error(
+        'Migration welcome notifications are only available for migrated members.',
+      );
+    }
 
     if (!member.phone) {
       throw new Error('Member does not have a phone number.');

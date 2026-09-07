@@ -13,7 +13,10 @@ import {
 } from '../../generated/prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
+
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LinkMemberAccountDto } from './dto/link-member-account.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
@@ -70,6 +73,7 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly memberNumberService: MemberNumberService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async findAll(organizationId: string) {
@@ -407,6 +411,30 @@ export class MembersService {
         return member;
       },
     );
+
+    /*
+     * Notification delivery happens after the member transaction
+     * succeeds so a failed email can never roll back membership creation.
+     */
+    if (source === MemberSource.MANUAL_ENTRY && createdMember.email) {
+      try {
+        await this.notificationsService.sendMemberWelcome(createdMember.id);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown member welcome notification error.';
+
+        /*
+         * This protects member creation from notification failures.
+         * The notification service already records normal delivery
+         * failures as FAILED notifications.
+         */
+        console.error(
+          `Member welcome notification failed for ${createdMember.id}: ${message}`,
+        );
+      }
+    }
 
     return this.toSafeMember(createdMember);
   }
@@ -818,10 +846,12 @@ export class MembersService {
       };
     }
 
-    if (
-      member.source !== MemberSource.MIGRATION_IMPORT &&
-      member.source !== MemberSource.MIGRATION_MANUAL
-    ) {
+    const activationEligibleSource =
+      member.source === MemberSource.MANUAL_ENTRY ||
+      member.source === MemberSource.MIGRATION_IMPORT ||
+      member.source === MemberSource.MIGRATION_MANUAL;
+
+    if (!activationEligibleSource) {
       return {
         exists: true,
         eligible: false,
@@ -927,13 +957,16 @@ export class MembersService {
       throw new NotFoundException('Member not found.');
     }
 
-    if (
-      member.source !== MemberSource.MIGRATION_IMPORT &&
-      member.source !== MemberSource.MIGRATION_MANUAL
-    ) {
+    const activationEligibleSource =
+      member.source === MemberSource.MANUAL_ENTRY ||
+      member.source === MemberSource.MIGRATION_IMPORT ||
+      member.source === MemberSource.MIGRATION_MANUAL;
+
+    if (!activationEligibleSource) {
       throw new ConflictException({
         code: 'INVALID_MEMBER_SOURCE',
-        message: 'Activation resend is only available for migrated members.',
+        message:
+          'Activation resend is only available for members that require activation.',
       });
     }
 
@@ -1011,6 +1044,28 @@ export class MembersService {
         return activation;
       },
     );
+
+    /*
+     * For manually entered members, the activation resend should
+     * also send the MEMBER_WELCOME notification.
+     *
+     * Migration members continue using the existing migration
+     * notification workflow.
+     */
+    if (member.source === MemberSource.MANUAL_ENTRY && member.email) {
+      try {
+        await this.notificationsService.sendMemberWelcome(member.id);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown member welcome notification error.';
+
+        console.error(
+          `Member activation resend notification failed for ${member.id}: ${message}`,
+        );
+      }
+    }
 
     return {
       message: 'A new membership activation link has been generated.',
@@ -1098,13 +1153,15 @@ export class MembersService {
       };
     }
 
-    if (
-      member.source !== MemberSource.MIGRATION_IMPORT &&
-      member.source !== MemberSource.MIGRATION_MANUAL
-    ) {
+    const activationEligibleSource =
+      member.source === MemberSource.MANUAL_ENTRY ||
+      member.source === MemberSource.MIGRATION_IMPORT ||
+      member.source === MemberSource.MIGRATION_MANUAL;
+
+    if (!activationEligibleSource) {
       throw new ConflictException({
         code: 'ACTIVATION_NOT_AVAILABLE',
-        message: 'This activation flow is only available for migrated members.',
+        message: 'This activation flow is not available for this membership.',
       });
     }
 
@@ -1223,14 +1280,15 @@ export class MembersService {
       });
     }
 
-    if (
-      member.source !== MemberSource.MIGRATION_IMPORT &&
-      member.source !== MemberSource.MIGRATION_MANUAL
-    ) {
+    const activationEligibleSource =
+      member.source === MemberSource.MANUAL_ENTRY ||
+      member.source === MemberSource.MIGRATION_IMPORT ||
+      member.source === MemberSource.MIGRATION_MANUAL;
+
+    if (!activationEligibleSource) {
       throw new ConflictException({
         code: 'ACTIVATION_NOT_AVAILABLE',
-        message:
-          'This KUHRSA membership is not currently eligible for activation.',
+        message: 'This activation flow is not available for this membership.',
       });
     }
 

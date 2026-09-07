@@ -163,8 +163,17 @@ export class CreateMemberDto {
    * SOURCE
    * ------------------------------------------------------------
    *
-   * Normal administrative creation may use REGISTRATION.
-   * Migration uses MIGRATION_IMPORT or MIGRATION_MANUAL.
+   * Normal administrative creation uses MANUAL_ENTRY.
+   *
+   * Migration uses:
+   * - MIGRATION_IMPORT
+   * - MIGRATION_MANUAL
+   *
+   * The normal administrative member creation endpoint
+   * explicitly overrides the source with MANUAL_ENTRY.
+   *
+   * This field remains available because migration-related
+   * workflows may use the same DTO with a source override.
    */
 
   @IsOptional()
