@@ -24,11 +24,15 @@ export class MemberNumberService {
 
     const client = tx ?? this.prisma;
 
-    const sequence = await client.memberNumberSequence.update({
+    const sequence = await client.memberNumberSequence.upsert({
       where: {
         category,
       },
-      data: {
+      create: {
+        category,
+        currentNumber: 1,
+      },
+      update: {
         currentNumber: {
           increment: 1,
         },
