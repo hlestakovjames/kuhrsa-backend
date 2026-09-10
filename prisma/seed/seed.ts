@@ -76,6 +76,89 @@ const memberCategories = [
   'LECTURER',
 ] as const;
 
+const governancePositions = [
+  {
+    code: 'CHAIRPERSON',
+    name: 'Chairperson',
+    description: 'Head of the KUHRSA executive leadership.',
+  },
+  {
+    code: 'VICE_CHAIRPERSON',
+    name: 'Vice Chairperson',
+    description: 'Deputy to the Chairperson and supports executive leadership.',
+  },
+  {
+    code: 'SECRETARY_GENERAL',
+    name: 'Secretary General',
+    description: 'Leads official administration, records, and executive correspondence.',
+  },
+  {
+    code: 'DEPUTY_SECRETARY_GENERAL',
+    name: 'Deputy Secretary General',
+    description: 'Supports the Secretary General in administrative responsibilities.',
+  },
+  {
+    code: 'TREASURER',
+    name: 'Treasurer',
+    description: 'Leads KUHRSA financial administration and financial reporting.',
+  },
+  {
+    code: 'DEPUTY_TREASURER',
+    name: 'Deputy Treasurer',
+    description: 'Supports the Treasurer in financial administration.',
+  },
+  {
+    code: 'PUBLICITY_SECRETARY',
+    name: 'Publicity Secretary',
+    description: 'Leads KUHRSA publicity, communication, and public information.',
+  },
+  {
+    code: 'DEPUTY_PUBLICITY_SECRETARY',
+    name: 'Deputy Publicity Secretary',
+    description: 'Supports the Publicity Secretary in communication and publicity.',
+  },
+  {
+    code: 'ORGANIZING_SECRETARY',
+    name: 'Organizing Secretary',
+    description: 'Coordinates KUHRSA events, programs, and organizational activities.',
+  },
+  {
+    code: 'DEPUTY_ORGANIZING_SECRETARY',
+    name: 'Deputy Organizing Secretary',
+    description: 'Supports the Organizing Secretary in coordination of activities.',
+  },
+  {
+    code: 'LEGAL_AFFAIRS_OFFICER',
+    name: 'Legal Affairs Officer',
+    description: 'Oversees KUHRSA legal affairs and provides organizational legal guidance.',
+  },
+  {
+    code: 'LEGAL_REPRESENTATIVE_YEAR_1',
+    name: 'Legal Representative – Year 1',
+    description: 'Represents Year 1 members in KUHRSA legal and representative matters.',
+  },
+  {
+    code: 'LEGAL_REPRESENTATIVE_YEAR_2',
+    name: 'Legal Representative – Year 2',
+    description: 'Represents Year 2 members in KUHRSA legal and representative matters.',
+  },
+  {
+    code: 'LEGAL_REPRESENTATIVE_YEAR_3',
+    name: 'Legal Representative – Year 3',
+    description: 'Represents Year 3 members in KUHRSA legal and representative matters.',
+  },
+  {
+    code: 'LEGAL_REPRESENTATIVE_YEAR_4',
+    name: 'Legal Representative – Year 4',
+    description: 'Represents Year 4 members in KUHRSA legal and representative matters.',
+  },
+  {
+    code: 'ICT_MANAGER',
+    name: 'ICT Manager',
+    description: 'Leads KUHRSA information technology, digital systems, and technical operations.',
+  },
+] as const;
+
 async function main() {
   console.log('Starting KUHRSA database bootstrap...');
 
@@ -266,7 +349,36 @@ async function main() {
 
   console.log('Administrator permissions assigned.');
 
-  // 7. Create or update protected System Owner
+  // 7. Official KUHRSA governance positions
+  for (const positionData of governancePositions) {
+    await prisma.position.upsert({
+      where: {
+        organizationId_code: {
+          organizationId: organization.id,
+          code: positionData.code,
+        },
+      },
+      update: {
+        name: positionData.name,
+        description: positionData.description,
+        isExecutive: true,
+      },
+      create: {
+        organizationId: organization.id,
+        name: positionData.name,
+        code: positionData.code,
+        description: positionData.description,
+        status: 'ACTIVE',
+        isExecutive: true,
+      },
+    });
+  }
+
+  console.log(
+    `Governance positions ready: ${governancePositions.length}`,
+  );
+
+  // 8. Create or update protected System Owner
   const passwordHash = await bcrypt.hash(ownerPassword, 12);
 
   const owner = await prisma.user.upsert({
@@ -290,7 +402,7 @@ async function main() {
 
   console.log(`System Owner ready: ${owner.email}`);
 
-  // 8. Assign Super Administrator role to System Owner
+  // 9. Assign Super Administrator role to System Owner
   await prisma.userRole.upsert({
     where: {
       userId_roleId: {
