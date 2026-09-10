@@ -13,6 +13,7 @@ import { Permissions } from '../auth/decorators/permissions/permissions.decorato
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -43,6 +44,18 @@ export class UsersController {
     @Request() req: AuthenticatedRequest,
   ) {
     return this.usersService.create(req.user.organizationId, req.user.id, dto);
+  }
+
+  @Patch('me/profile')
+  async updateMyProfile(
+    @Body() dto: UpdateMyProfileDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.updateMyProfile(
+      req.user.id,
+      req.user.organizationId,
+      dto,
+    );
   }
 
   @Patch(':id')

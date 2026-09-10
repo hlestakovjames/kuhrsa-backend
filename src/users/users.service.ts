@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 interface SafeUserRecord {
@@ -16,6 +17,7 @@ interface SafeUserRecord {
 
   firstName?: string | null;
   lastName?: string | null;
+  phone?: string | null;
 
   email: string;
   status: string;
@@ -315,6 +317,80 @@ export class UsersService {
     return this.findOne(user.id, organizationId);
   }
 
+  async updateMyProfile(
+    userId: string,
+    organizationId: string,
+    dto: UpdateMyProfileDto,
+  ) {
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        organizationId,
+        status: 'ACTIVE',
+      },
+    });
+
+    if (!existingUser) {
+      throw new NotFoundException('Authenticated user was not found.');
+    }
+
+    const oldValue = {
+      firstName: existingUser.firstName,
+      lastName: existingUser.lastName,
+      phone: existingUser.phone,
+    };
+
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: {
+          id: existingUser.id,
+        },
+
+        data: {
+          ...(dto.firstName !== undefined
+            ? {
+                firstName: dto.firstName.trim(),
+              }
+            : {}),
+
+          ...(dto.lastName !== undefined
+            ? {
+                lastName: dto.lastName.trim(),
+              }
+            : {}),
+
+          ...(dto.phone !== undefined
+            ? {
+                phone: dto.phone.trim(),
+              }
+            : {}),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorUserId: existingUser.id,
+          action: 'UPDATE',
+          entityType: 'User',
+          entityId: user.id,
+
+          oldValue,
+
+          newValue: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            phone: user.phone,
+          },
+        },
+      });
+
+      return user;
+    });
+
+    return this.findOne(updatedUser.id, organizationId);
+  }
+
   async update(
     id: string,
     organizationId: string,
@@ -453,6 +529,8 @@ export class UsersService {
       firstName: user.firstName ?? null,
 
       lastName: user.lastName ?? null,
+
+      phone: user.phone ?? null,
 
       email: user.email,
 
