@@ -109,6 +109,28 @@ enum NotificationStatus {
   CANCELLED
 }
 
+
+enum PositionStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum TermStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum PositionAssignmentStatus {
+  PENDING
+  ACTIVE
+  ENDED
+  REVOKED
+}
+
+
 model Organization {
   id        String   @id @default(uuid())
   name      String
@@ -123,6 +145,9 @@ model Organization {
   auditLogs         AuditLog[]
   migrationBatches  MigrationBatch[]
   notifications     Notification[]
+  positions         Position[]
+  terms             Term[]
+  positionAssignments PositionAssignment[]
 
   @@index([name])
 }
@@ -194,6 +219,7 @@ model Member {
   membershipPeriods MembershipPeriod[]
   activation        MemberActivation?
   notifications     Notification[]
+  positionAssignments PositionAssignment[]
 
   @@index([organizationId])
   @@index([status])
@@ -337,6 +363,7 @@ model Role {
   organization    Organization     @relation(fields: [organizationId], references: [id])
   userRoles       UserRole[]
   rolePermissions RolePermission[]
+  positionAssignmentRoles PositionAssignmentRole[]
 
   @@unique([organizationId, code])
   @@index([organizationId])
@@ -452,4 +479,100 @@ model Notification {
   @@index([channel])
   @@index([status])
   @@index([createdAt])
+}
+
+model Position {
+  id             String         @id @default(uuid())
+  organizationId String
+
+  name        String
+  code        String
+  description String?
+  status      PositionStatus @default(ACTIVE)
+  isExecutive Boolean        @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments  PositionAssignment[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([status])
+  @@index([isExecutive])
+}
+
+model Term {
+  id             String     @id @default(uuid())
+  organizationId String
+
+  name     String
+  code     String
+  startsAt DateTime
+  endsAt   DateTime
+  status   TermStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments  PositionAssignment[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([status])
+  @@index([startsAt, endsAt])
+}
+
+model PositionAssignment {
+  id             String                   @id @default(uuid())
+  organizationId String
+  memberId       String
+  positionId     String
+  termId         String
+
+  status PositionAssignmentStatus @default(PENDING)
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  assignedAt DateTime @default(now())
+  assignedBy String?
+  endedAt    DateTime?
+  revokedAt  DateTime?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member       Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  position     Position                 @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  term         Term                     @relation(fields: [termId], references: [id], onDelete: Cascade)
+  roles        PositionAssignmentRole[]
+
+  @@unique([memberId, positionId, termId])
+  @@index([organizationId])
+  @@index([memberId])
+  @@index([positionId])
+  @@index([termId])
+  @@index([status])
+  @@index([startsAt, endsAt])
+}
+
+model PositionAssignmentRole {
+  id                   String @id @default(uuid())
+  positionAssignmentId String
+  roleId               String
+
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  positionAssignment PositionAssignment @relation(fields: [positionAssignmentId], references: [id], onDelete: Cascade)
+  role               Role               @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([positionAssignmentId, roleId])
+  @@index([positionAssignmentId])
+  @@index([roleId])
 }
