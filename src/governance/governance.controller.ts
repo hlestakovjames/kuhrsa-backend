@@ -28,6 +28,18 @@ export class GovernanceController {
   constructor(private readonly governanceService: GovernanceService) {}
 
   // ---------------------------------------------------------------------------
+  // CURRENT USER GOVERNANCE
+  // ---------------------------------------------------------------------------
+
+  @Get('me')
+  async findMyGovernance(@Request() req: AuthenticatedRequest) {
+    return this.governanceService.findMyGovernance(
+      req.user.id,
+      req.user.organizationId,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // POSITIONS
   // ---------------------------------------------------------------------------
 

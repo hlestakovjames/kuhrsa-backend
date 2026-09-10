@@ -23,6 +23,211 @@ import { UpdateTermDto } from './dto/update-term.dto';
 export class GovernanceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async findMyGovernance(userId: string, organizationId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        organizationId,
+        status: 'ACTIVE',
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        member: {
+          select: {
+            id: true,
+            memberNumber: true,
+            registrationNumber: true,
+            admissionNumber: true,
+            category: true,
+            yearOfStudy: true,
+            graduationYear: true,
+            programme: true,
+            faculty: true,
+            department: true,
+            status: true,
+          },
+        },
+        userRoles: {
+          where: {
+            revokedAt: null,
+            startsAt: {
+              lte: new Date(),
+            },
+            OR: [
+              {
+                endsAt: null,
+              },
+              {
+                endsAt: {
+                  gt: new Date(),
+                },
+              },
+            ],
+          },
+          select: {
+            id: true,
+            startsAt: true,
+            endsAt: true,
+            role: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                rolePermissions: {
+                  select: {
+                    permission: {
+                      select: {
+                        code: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Authenticated user was not found.');
+    }
+
+    const now = new Date();
+
+    const assignments = user.member
+      ? await this.prisma.positionAssignment.findMany({
+          where: {
+            organizationId,
+            memberId: user.member.id,
+            status: 'ACTIVE',
+            startsAt: {
+              lte: now,
+            },
+            endsAt: {
+              gt: now,
+            },
+          },
+          orderBy: [
+            {
+              startsAt: 'desc',
+            },
+            {
+              createdAt: 'desc',
+            },
+          ],
+          select: {
+            id: true,
+            status: true,
+            startsAt: true,
+            endsAt: true,
+            assignedAt: true,
+            endedAt: true,
+            revokedAt: true,
+            notes: true,
+            position: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                description: true,
+                status: true,
+                isExecutive: true,
+              },
+            },
+            term: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                status: true,
+                startsAt: true,
+                endsAt: true,
+              },
+            },
+            roles: {
+              select: {
+                role: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    description: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+      : [];
+
+    const effectiveRoles = user.userRoles.map((userRole) => ({
+      id: userRole.role.id,
+      code: userRole.role.code,
+      name: userRole.role.name,
+      startsAt: userRole.startsAt,
+      endsAt: userRole.endsAt,
+    }));
+
+    const effectivePermissions = Array.from(
+      new Set(
+        user.userRoles.flatMap((userRole) =>
+          userRole.role.rolePermissions
+            .map((rolePermission) => rolePermission.permission?.code)
+            .filter((code): code is string => Boolean(code)),
+        ),
+      ),
+    ).sort();
+
+    return {
+      user: {
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
+      member: user.member
+        ? {
+            id: user.member.id,
+            memberNumber: user.member.memberNumber,
+            registrationNumber: user.member.registrationNumber,
+            admissionNumber: user.member.admissionNumber,
+            category: user.member.category,
+            yearOfStudy: user.member.yearOfStudy,
+            graduationYear: user.member.graduationYear,
+            programme: user.member.programme,
+            faculty: user.member.faculty,
+            department: user.member.department,
+            status: user.member.status,
+          }
+        : null,
+      governance: {
+        hasActiveAssignment: assignments.length > 0,
+        assignments: assignments.map((assignment) => ({
+          id: assignment.id,
+          status: assignment.status,
+          startsAt: assignment.startsAt,
+          endsAt: assignment.endsAt,
+          assignedAt: assignment.assignedAt,
+          endedAt: assignment.endedAt,
+          revokedAt: assignment.revokedAt,
+          notes: assignment.notes,
+          position: assignment.position,
+          term: assignment.term,
+          roles: assignment.roles.map(({ role }) => role),
+        })),
+      },
+      access: {
+        roles: effectiveRoles,
+        permissions: effectivePermissions,
+      },
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // POSITIONS
   // ---------------------------------------------------------------------------
