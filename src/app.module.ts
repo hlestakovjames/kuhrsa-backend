@@ -12,6 +12,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { MigrationsModule } from './migrations/migrations.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { GovernanceModule } from './governance/governance.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     HealthModule,
     MigrationsModule,
     NotificationsModule,
+    GovernanceModule,
   ],
 
   providers: [
