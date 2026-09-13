@@ -27,19 +27,19 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
-  @Permissions('members.view')
+  @Permissions('communication.notifications.view')
   async findAll(@Query() query: NotificationQueryDto) {
     return this.notificationsService.findAll(query);
   }
 
   @Get('summary')
-  @Permissions('members.view')
+  @Permissions('communication.notifications.view')
   async getSummary() {
     return this.notificationsService.getSummary();
   }
 
   @Get('member/:memberId')
-  @Permissions('members.view')
+  @Permissions('communication.notifications.view')
   async findByMember(
     @Param('memberId') memberId: string,
     @Query() query: NotificationQueryDto,
@@ -48,13 +48,13 @@ export class NotificationsController {
   }
 
   @Get(':id')
-  @Permissions('members.view')
+  @Permissions('communication.notifications.view')
   async findOne(@Param('id') id: string) {
     return this.notificationsService.findOne(id);
   }
 
   @Post('members/:memberId/migration-welcome')
-  @Permissions('members.manage')
+  @Permissions('communication.notifications.manage')
   async sendMigrationWelcome(
     @Param('memberId') memberId: string,
     @Request() req: AuthenticatedRequest,
@@ -70,7 +70,7 @@ export class NotificationsController {
   }
 
   @Post('members/:memberId/migration-welcome-sms')
-  @Permissions('members.manage')
+  @Permissions('communication.notifications.manage')
   async sendMigrationWelcomeSms(
     @Param('memberId') memberId: string,
     @Request() req: AuthenticatedRequest,
@@ -86,7 +86,7 @@ export class NotificationsController {
   }
 
   @Post(':id/retry')
-  @Permissions('members.manage')
+  @Permissions('communication.notifications.manage')
   async retry(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     const result = await this.notificationsService.retry(id);
 

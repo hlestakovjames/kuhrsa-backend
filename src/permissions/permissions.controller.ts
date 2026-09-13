@@ -8,9 +8,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+
 import { PermissionsService } from './permissions.service';
 
 @Controller('permissions')
@@ -20,14 +22,14 @@ export class PermissionsController {
 
   @Get()
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.view')
+  @Permissions('users.permissions.view')
   async findAll() {
     return this.permissionsService.findAll();
   }
 
   @Get('role/:roleId')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.view')
+  @Permissions('users.permissions.view')
   async findRolePermissions(
     @Param('roleId') roleId: string,
     @Request() req: AuthenticatedRequest,
@@ -40,7 +42,7 @@ export class PermissionsController {
 
   @Post('role/:roleId/:permissionId')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.manage')
+  @Permissions('users.permissions.manage')
   async assignPermission(
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,
@@ -56,7 +58,7 @@ export class PermissionsController {
 
   @Delete('role/:roleId/:permissionId')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.manage')
+  @Permissions('users.permissions.manage')
   async removePermission(
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,

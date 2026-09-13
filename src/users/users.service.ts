@@ -56,13 +56,56 @@ export class UsersService {
   async findByEmail(email: string) {
     const now = new Date();
 
-    return this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: {
         email: email.toLowerCase().trim(),
       },
       include: {
         organization: true,
-        member: true,
+        member: {
+          include: {
+            positionAssignments: {
+              where: {
+                status: 'ACTIVE',
+                startsAt: {
+                  lte: now,
+                },
+                endsAt: {
+                  gt: now,
+                },
+                position: {
+                  status: 'ACTIVE',
+                },
+                term: {
+                  status: 'ACTIVE',
+                  startsAt: {
+                    lte: now,
+                  },
+                  endsAt: {
+                    gt: now,
+                  },
+                },
+              },
+              include: {
+                position: true,
+                term: true,
+                roles: {
+                  include: {
+                    role: {
+                      include: {
+                        rolePermissions: {
+                          include: {
+                            permission: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
         userRoles: {
           where: this.activeUserRoleWhere(now),
           include: {
@@ -79,12 +122,14 @@ export class UsersService {
         },
       },
     });
+
+    return this.withEffectiveRoles(user);
   }
 
   async findByRegistrationNumber(registrationNumber: string) {
     const now = new Date();
 
-    return this.prisma.user.findFirst({
+    const user = await this.prisma.user.findFirst({
       where: {
         member: {
           registrationNumber: registrationNumber.trim(),
@@ -92,7 +137,50 @@ export class UsersService {
       },
       include: {
         organization: true,
-        member: true,
+        member: {
+          include: {
+            positionAssignments: {
+              where: {
+                status: 'ACTIVE',
+                startsAt: {
+                  lte: now,
+                },
+                endsAt: {
+                  gt: now,
+                },
+                position: {
+                  status: 'ACTIVE',
+                },
+                term: {
+                  status: 'ACTIVE',
+                  startsAt: {
+                    lte: now,
+                  },
+                  endsAt: {
+                    gt: now,
+                  },
+                },
+              },
+              include: {
+                position: true,
+                term: true,
+                roles: {
+                  include: {
+                    role: {
+                      include: {
+                        rolePermissions: {
+                          include: {
+                            permission: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
         userRoles: {
           where: this.activeUserRoleWhere(now),
           include: {
@@ -109,18 +197,63 @@ export class UsersService {
         },
       },
     });
+
+    return this.withEffectiveRoles(user);
   }
 
   async findById(id: string) {
     const now = new Date();
 
-    return this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: {
         id,
       },
       include: {
         organization: true,
-        member: true,
+        member: {
+          include: {
+            positionAssignments: {
+              where: {
+                status: 'ACTIVE',
+                startsAt: {
+                  lte: now,
+                },
+                endsAt: {
+                  gt: now,
+                },
+                position: {
+                  status: 'ACTIVE',
+                },
+                term: {
+                  status: 'ACTIVE',
+                  startsAt: {
+                    lte: now,
+                  },
+                  endsAt: {
+                    gt: now,
+                  },
+                },
+              },
+              include: {
+                position: true,
+                term: true,
+                roles: {
+                  include: {
+                    role: {
+                      include: {
+                        rolePermissions: {
+                          include: {
+                            permission: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
         userRoles: {
           where: this.activeUserRoleWhere(now),
           include: {
@@ -137,6 +270,8 @@ export class UsersService {
         },
       },
     });
+
+    return this.withEffectiveRoles(user);
   }
 
   async updateLastLogin(id: string) {
@@ -255,16 +390,12 @@ export class UsersService {
       const createdUser = await tx.user.create({
         data: {
           organizationId,
-
           firstName: dto.firstName.trim(),
-
           lastName: dto.lastName.trim(),
-
           email,
           passwordHash,
           status: 'ACTIVE',
         },
-
         include: {
           organization: true,
           member: true,
@@ -293,15 +424,10 @@ export class UsersService {
           entityId: createdUser.id,
           newValue: {
             id: createdUser.id,
-
             firstName: createdUser.firstName,
-
             lastName: createdUser.lastName,
-
             email: createdUser.email,
-
             status: createdUser.status,
-
             role: {
               id: roleToAssign.id,
               name: roleToAssign.name,
@@ -345,7 +471,6 @@ export class UsersService {
         where: {
           id: existingUser.id,
         },
-
         data: {
           ...(dto.firstName !== undefined
             ? {
@@ -374,9 +499,7 @@ export class UsersService {
           action: 'UPDATE',
           entityType: 'User',
           entityId: user.id,
-
           oldValue,
-
           newValue: {
             firstName: user.firstName,
             lastName: user.lastName,
@@ -430,11 +553,8 @@ export class UsersService {
 
     const oldValue = {
       firstName: existingUser.firstName,
-
       lastName: existingUser.lastName,
-
       email: existingUser.email,
-
       status: existingUser.status,
     };
 
@@ -443,7 +563,6 @@ export class UsersService {
         where: {
           id,
         },
-
         data: {
           ...(dto.firstName !== undefined
             ? {
@@ -478,16 +597,11 @@ export class UsersService {
           action: 'UPDATE',
           entityType: 'User',
           entityId: user.id,
-
           oldValue,
-
           newValue: {
             firstName: user.firstName,
-
             lastName: user.lastName,
-
             email: user.email,
-
             status: user.status,
           },
         },
@@ -502,11 +616,9 @@ export class UsersService {
   private activeUserRoleWhere(now: Date) {
     return {
       revokedAt: null,
-
       startsAt: {
         lte: now,
       },
-
       OR: [
         {
           endsAt: null,
@@ -520,36 +632,75 @@ export class UsersService {
     } satisfies Prisma.UserRoleWhereInput;
   }
 
+  private withEffectiveRoles<T extends any>(user: T | null): T | null {
+    if (!user) {
+      return null;
+    }
+
+    const directRoles = Array.isArray((user as any).userRoles)
+      ? (user as any).userRoles
+      : [];
+
+    const positionAssignments = Array.isArray(
+      (user as any).member?.positionAssignments,
+    )
+      ? (user as any).member.positionAssignments
+      : [];
+
+    const effectiveRoles = [...directRoles];
+
+    for (const assignment of positionAssignments) {
+      for (const assignmentRole of assignment.roles ?? []) {
+        const role = assignmentRole.role;
+
+        if (!role) {
+          continue;
+        }
+
+        const alreadyIncluded = effectiveRoles.some(
+          (userRole: any) => userRole.role?.id === role.id,
+        );
+
+        if (!alreadyIncluded) {
+          effectiveRoles.push({
+            id: `position-assignment-role:${assignment.id}:${role.id}`,
+            userId: (user as any).id,
+            roleId: role.id,
+            assignedAt: assignmentRole.assignedAt,
+            assignedBy: assignmentRole.assignedBy,
+            startsAt: assignment.startsAt,
+            endsAt: assignment.endsAt,
+            revokedAt: null,
+            role,
+          });
+        }
+      }
+    }
+
+    return {
+      ...(user as any),
+      userRoles: effectiveRoles,
+    } as T;
+  }
+
   private toSafeUser(user: SafeUserRecord) {
     return {
       id: user.id,
-
       organizationId: user.organizationId,
-
       firstName: user.firstName ?? null,
-
       lastName: user.lastName ?? null,
-
       phone: user.phone ?? null,
-
       email: user.email,
-
       status: user.status,
-
       isSystemOwner: user.isSystemOwner,
-
       lastLoginAt: user.lastLoginAt ?? null,
-
       createdAt: user.createdAt ?? null,
-
       updatedAt: user.updatedAt ?? null,
 
       organization: user.organization
         ? {
             id: user.organization.id,
-
             name: user.organization.name,
-
             code: user.organization.code,
           }
         : null,
@@ -557,11 +708,8 @@ export class UsersService {
       member: user.member
         ? {
             id: user.member.id,
-
             registrationNumber: user.member.registrationNumber ?? null,
-
             memberNumber: user.member.memberNumber,
-
             status: user.member.status,
           }
         : null,
@@ -569,9 +717,7 @@ export class UsersService {
       roles:
         user.userRoles?.map((userRole) => ({
           id: userRole.role.id,
-
           name: userRole.role.name,
-
           code: userRole.role.code,
         })) ?? [],
     };

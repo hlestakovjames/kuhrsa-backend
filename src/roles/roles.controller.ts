@@ -10,9 +10,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+
 import { AssignUserRoleDto } from './dto/assign-user-role.dto';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -25,21 +27,21 @@ export class RolesController {
 
   @Get()
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.view')
+  @Permissions('users.roles.view')
   async findAll(@Request() req: AuthenticatedRequest) {
     return this.rolesService.findAll(req.user.organizationId);
   }
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.view')
+  @Permissions('users.roles.view')
   async findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.rolesService.findOne(id, req.user.organizationId);
   }
 
   @Post()
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.manage')
+  @Permissions('users.roles.create')
   async create(
     @Body() dto: CreateRoleDto,
     @Request() req: AuthenticatedRequest,
@@ -49,7 +51,7 @@ export class RolesController {
 
   @Patch(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.manage')
+  @Permissions('users.roles.update')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateRoleDto,
@@ -65,7 +67,7 @@ export class RolesController {
 
   @Post(':id/users/:userId')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.manage')
+  @Permissions('users.roles.assign')
   async assignUser(
     @Param('id') roleId: string,
     @Param('userId') userId: string,
@@ -84,7 +86,7 @@ export class RolesController {
 
   @Delete(':id/users/:userId')
   @UseGuards(PermissionsGuard)
-  @Permissions('roles.manage')
+  @Permissions('users.roles.assign')
   async removeUser(
     @Param('id') roleId: string,
     @Param('userId') userId: string,

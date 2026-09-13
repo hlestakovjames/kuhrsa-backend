@@ -24,6 +24,8 @@ export class GovernanceService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findMyGovernance(userId: string, organizationId: string) {
+    const now = new Date();
+
     const user = await this.prisma.user.findFirst({
       where: {
         id: userId,
@@ -36,6 +38,7 @@ export class GovernanceService {
         firstName: true,
         lastName: true,
         email: true,
+
         member: {
           select: {
             id: true,
@@ -49,13 +52,100 @@ export class GovernanceService {
             faculty: true,
             department: true,
             status: true,
+
+            positionAssignments: {
+              where: {
+                status: PositionAssignmentStatus.ACTIVE,
+                startsAt: {
+                  lte: now,
+                },
+                endsAt: {
+                  gt: now,
+                },
+                position: {
+                  status: PositionStatus.ACTIVE,
+                },
+                term: {
+                  status: TermStatus.ACTIVE,
+                  startsAt: {
+                    lte: now,
+                  },
+                  endsAt: {
+                    gt: now,
+                  },
+                },
+              },
+              orderBy: [
+                {
+                  startsAt: 'desc',
+                },
+                {
+                  createdAt: 'desc',
+                },
+              ],
+              select: {
+                id: true,
+                status: true,
+                startsAt: true,
+                endsAt: true,
+                assignedAt: true,
+                endedAt: true,
+                revokedAt: true,
+                notes: true,
+
+                position: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    description: true,
+                    status: true,
+                    isExecutive: true,
+                  },
+                },
+
+                term: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    status: true,
+                    startsAt: true,
+                    endsAt: true,
+                  },
+                },
+
+                roles: {
+                  select: {
+                    role: {
+                      select: {
+                        id: true,
+                        code: true,
+                        name: true,
+                        description: true,
+                        rolePermissions: {
+                          select: {
+                            permission: {
+                              select: {
+                                code: true,
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
+
         userRoles: {
           where: {
             revokedAt: null,
             startsAt: {
-              lte: new Date(),
+              lte: now,
             },
             OR: [
               {
@@ -63,7 +153,7 @@ export class GovernanceService {
               },
               {
                 endsAt: {
-                  gt: new Date(),
+                  gt: now,
                 },
               },
             ],
@@ -72,6 +162,7 @@ export class GovernanceService {
             id: true,
             startsAt: true,
             endsAt: true,
+
             role: {
               select: {
                 id: true,
@@ -97,91 +188,68 @@ export class GovernanceService {
       throw new NotFoundException('Authenticated user was not found.');
     }
 
-    const now = new Date();
+    const assignments = user.member?.positionAssignments ?? [];
 
-    const assignments = user.member
-      ? await this.prisma.positionAssignment.findMany({
-          where: {
-            organizationId,
-            memberId: user.member.id,
-            status: 'ACTIVE',
-            startsAt: {
-              lte: now,
-            },
-            endsAt: {
-              gt: now,
-            },
-          },
-          orderBy: [
-            {
-              startsAt: 'desc',
-            },
-            {
-              createdAt: 'desc',
-            },
-          ],
-          select: {
-            id: true,
-            status: true,
-            startsAt: true,
-            endsAt: true,
-            assignedAt: true,
-            endedAt: true,
-            revokedAt: true,
-            notes: true,
-            position: {
-              select: {
-                id: true,
-                code: true,
-                name: true,
-                description: true,
-                status: true,
-                isExecutive: true,
-              },
-            },
-            term: {
-              select: {
-                id: true,
-                code: true,
-                name: true,
-                status: true,
-                startsAt: true,
-                endsAt: true,
-              },
-            },
-            roles: {
-              select: {
-                role: {
-                  select: {
-                    id: true,
-                    code: true,
-                    name: true,
-                    description: true,
-                  },
-                },
-              },
-            },
-          },
-        })
-      : [];
+    const effectiveRoles = new Map<
+      string,
+      {
+        id: string;
+        code: string;
+        name: string;
+        startsAt: Date;
+        endsAt: Date | null;
+      }
+    >();
 
-    const effectiveRoles = user.userRoles.map((userRole) => ({
-      id: userRole.role.id,
-      code: userRole.role.code,
-      name: userRole.role.name,
-      startsAt: userRole.startsAt,
-      endsAt: userRole.endsAt,
-    }));
+    for (const userRole of user.userRoles) {
+      effectiveRoles.set(userRole.role.id, {
+        id: userRole.role.id,
+        code: userRole.role.code,
+        name: userRole.role.name,
+        startsAt: userRole.startsAt,
+        endsAt: userRole.endsAt,
+      });
+    }
 
-    const effectivePermissions = Array.from(
-      new Set(
-        user.userRoles.flatMap((userRole) =>
-          userRole.role.rolePermissions
-            .map((rolePermission) => rolePermission.permission?.code)
-            .filter((code): code is string => Boolean(code)),
-        ),
-      ),
-    ).sort();
+    for (const assignment of assignments) {
+      for (const assignmentRole of assignment.roles) {
+        const role = assignmentRole.role;
+
+        if (!effectiveRoles.has(role.id)) {
+          effectiveRoles.set(role.id, {
+            id: role.id,
+            code: role.code,
+            name: role.name,
+            startsAt: assignment.startsAt,
+            endsAt: assignment.endsAt,
+          });
+        }
+      }
+    }
+
+    const effectivePermissions = new Set<string>();
+
+    for (const userRole of user.userRoles) {
+      for (const rolePermission of userRole.role.rolePermissions) {
+        const code = rolePermission.permission?.code;
+
+        if (code) {
+          effectivePermissions.add(code);
+        }
+      }
+    }
+
+    for (const assignment of assignments) {
+      for (const assignmentRole of assignment.roles) {
+        for (const rolePermission of assignmentRole.role.rolePermissions) {
+          const code = rolePermission.permission?.code;
+
+          if (code) {
+            effectivePermissions.add(code);
+          }
+        }
+      }
+    }
 
     return {
       user: {
@@ -190,6 +258,7 @@ export class GovernanceService {
         lastName: user.lastName,
         email: user.email,
       },
+
       member: user.member
         ? {
             id: user.member.id,
@@ -205,8 +274,10 @@ export class GovernanceService {
             status: user.member.status,
           }
         : null,
+
       governance: {
         hasActiveAssignment: assignments.length > 0,
+
         assignments: assignments.map((assignment) => ({
           id: assignment.id,
           status: assignment.status,
@@ -218,12 +289,18 @@ export class GovernanceService {
           notes: assignment.notes,
           position: assignment.position,
           term: assignment.term,
-          roles: assignment.roles.map(({ role }) => role),
+          roles: assignment.roles.map(({ role }) => ({
+            id: role.id,
+            code: role.code,
+            name: role.name,
+            description: role.description,
+          })),
         })),
       },
+
       access: {
-        roles: effectiveRoles,
-        permissions: effectivePermissions,
+        roles: Array.from(effectiveRoles.values()),
+        permissions: Array.from(effectivePermissions).sort(),
       },
     };
   }

@@ -48,7 +48,7 @@ export class MemberActivationController {
 
   @Post(':id/resend')
   @UseGuards(AuthGuard('jwt'), PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.activation.process')
   async resend(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.membersService.resendActivation(
       id,

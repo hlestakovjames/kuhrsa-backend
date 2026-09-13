@@ -28,32 +28,27 @@ export class MembersController {
 
   @Get()
   @UseGuards(PermissionsGuard)
-  @Permissions('members.view')
-  async findAll(
-    @Request()
-    req: AuthenticatedRequest,
-  ) {
+  @Permissions('membership.members.view')
+  async findAll(@Request() req: AuthenticatedRequest) {
     return this.membersService.findAll(req.user.organizationId);
   }
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.view')
+  @Permissions('membership.members.view')
   async findOne(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.findOne(id, req.user.organizationId);
   }
 
   @Post()
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.members.create')
   async create(
     @Body() dto: CreateMemberDto,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.create(
       req.user.organizationId,
@@ -65,12 +60,11 @@ export class MembersController {
 
   @Patch(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.members.update')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateMemberDto,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.update(
       id,
@@ -82,12 +76,11 @@ export class MembersController {
 
   @Post(':id/link-account')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.members.update')
   async linkAccount(
     @Param('id') id: string,
     @Body() dto: LinkMemberAccountDto,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.linkAccount(
       id,
@@ -99,11 +92,10 @@ export class MembersController {
 
   @Post(':id/approve')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.approve')
+  @Permissions('membership.pending.approve')
   async approve(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.approve(
       id,
@@ -114,11 +106,10 @@ export class MembersController {
 
   @Post(':id/activate')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.activation.process')
   async activate(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.activate(
       id,
@@ -129,11 +120,10 @@ export class MembersController {
 
   @Post(':id/suspend')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.members.update')
   async suspend(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.membersService.suspend(
       id,

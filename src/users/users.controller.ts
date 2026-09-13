@@ -9,9 +9,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+
 import { Permissions } from '../auth/decorators/permissions/permissions.decorator';
 import { PermissionsGuard } from '../auth/guards/permissions/permissions.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -24,21 +26,21 @@ export class UsersController {
 
   @Get()
   @UseGuards(PermissionsGuard)
-  @Permissions('users.view')
+  @Permissions('users.users.view')
   async findAll(@Request() req: AuthenticatedRequest) {
     return this.usersService.findAll(req.user.organizationId);
   }
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('users.view')
+  @Permissions('users.users.view')
   async findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.usersService.findOne(id, req.user.organizationId);
   }
 
   @Post()
   @UseGuards(PermissionsGuard)
-  @Permissions('users.create')
+  @Permissions('users.users.create')
   async create(
     @Body() dto: CreateUserDto,
     @Request() req: AuthenticatedRequest,
@@ -60,7 +62,7 @@ export class UsersController {
 
   @Patch(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('users.update')
+  @Permissions('users.users.update')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,

@@ -26,7 +26,7 @@ export class MigrationsController {
 
   @Get('template')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.migration.view')
   async template(@Res() res: Response): Promise<void> {
     const buffer = await this.migrationsService.generateTemplate();
 
@@ -43,7 +43,7 @@ export class MigrationsController {
 
   @Post('upload')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.migration.import')
   @UseInterceptors(
     FileInterceptor('file', {
       limits: {
@@ -66,11 +66,10 @@ export class MigrationsController {
 
   @Get(':id/report')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.view')
+  @Permissions('membership.migration.view')
   async report(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
     @Res() res: Response,
   ): Promise<void> {
     const report = await this.migrationsService.generateReport(
@@ -90,22 +89,20 @@ export class MigrationsController {
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.view')
+  @Permissions('membership.migration.view')
   async getBatch(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.migrationsService.getBatch(id, req.user.organizationId);
   }
 
   @Post(':id/import')
   @UseGuards(PermissionsGuard)
-  @Permissions('members.manage')
+  @Permissions('membership.migration.import')
   async importBatch(
     @Param('id') id: string,
-    @Request()
-    req: AuthenticatedRequest,
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.migrationsService.importBatch(
       id,
