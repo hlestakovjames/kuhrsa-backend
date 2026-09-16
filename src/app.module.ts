@@ -13,6 +13,7 @@ import { HealthModule } from './health/health.module';
 import { MigrationsModule } from './migrations/migrations.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { GovernanceModule } from './governance/governance.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { GovernanceModule } from './governance/governance.module';
     MigrationsModule,
     NotificationsModule,
     GovernanceModule,
+    FinanceModule,
   ],
 
   providers: [

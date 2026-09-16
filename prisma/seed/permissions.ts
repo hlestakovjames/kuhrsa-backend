@@ -198,8 +198,26 @@ export const canonicalPermissions: PermissionDefinition[] = [
   permission('finance', 'fees', 'view', 'View membership fee structures.'),
   permission('finance', 'fees', 'manage', 'Manage membership fee structures.'),
 
+  permission('finance', 'charges', 'view', 'View member charges.'),
+  permission('finance', 'charges', 'create', 'Create member charges.'),
+  permission('finance', 'charges', 'update', 'Update member charges.'),
+  permission('finance', 'charges', 'waive', 'Waive member charges.'),
+  permission('finance', 'charges', 'cancel', 'Cancel member charges.'),
+
+
+  permission('finance', 'periods', 'view', 'View financial periods.'),
+  permission('finance', 'periods', 'create', 'Create financial periods.'),
+  permission('finance', 'periods', 'update', 'Update financial periods.'),
+  permission('finance', 'periods', 'close', 'Close financial periods.'),
+  permission('finance', 'periods', 'lock', 'Lock financial periods.'),
+
+
   permission('finance', 'payments', 'view', 'View payment transactions.'),
   permission('finance', 'payments', 'manage', 'Manage payment records.'),
+  permission('finance', 'payments', 'allocate', 'Allocate payments to member charges.'),
+
+  permission('finance', 'providers', 'view', 'View payment providers and configurations.'),
+  permission('finance', 'providers', 'manage', 'Manage payment providers and configurations.'),
 
   permission('finance', 'history', 'view', 'View financial transaction history.'),
 

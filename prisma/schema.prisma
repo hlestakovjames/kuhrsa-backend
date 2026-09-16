@@ -156,6 +156,65 @@ enum PositionAssignmentStatus {
   REVOKED
 }
 
+enum FeeType {
+  ADMISSION
+  ANNUAL_MEMBERSHIP
+  EVENT
+  ACTIVITY
+  OTHER
+}
+
+enum FeeScheduleStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum ChargeStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  WAIVED
+  CANCELLED
+  OVERDUE
+}
+
+enum PaymentMethod {
+  MPESA
+  BANK
+  CASH
+  MANUAL
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum ReceiptStatus {
+  ISSUED
+  VOIDED
+}
+
+enum PaymentProviderType {
+  MPESA
+  BANK
+  OTHER
+}
+
+enum FinancialPeriodStatus {
+  OPEN
+  CLOSED
+  LOCKED
+}
+
 model Organization {
   id        String   @id @default(uuid())
   name      String
@@ -163,16 +222,24 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users               User[]
-  members             Member[]
-  roles               Role[]
-  membershipPeriods   MembershipPeriod[]
-  auditLogs           AuditLog[]
-  migrationBatches    MigrationBatch[]
-  notifications       Notification[]
-  positions           Position[]
-  terms               Term[]
-  positionAssignments PositionAssignment[]
+  users                 User[]
+  members               Member[]
+  roles                 Role[]
+  membershipPeriods     MembershipPeriod[]
+  auditLogs             AuditLog[]
+  migrationBatches      MigrationBatch[]
+  notifications         Notification[]
+  positions             Position[]
+  terms                 Term[]
+  positionAssignments   PositionAssignment[]
+  feeDefinitions        FeeDefinition[]
+  feeSchedules          FeeSchedule[]
+  memberCharges         MemberCharge[]
+  payments              Payment[]
+  paymentProviders      PaymentProvider[]
+  paymentConfigurations PaymentConfiguration[]
+  receipts              Receipt[]
+  financialPeriods      FinancialPeriod[]
 
   @@index([name])
 }
@@ -254,6 +321,9 @@ model Member {
   activation          MemberActivation?
   notifications       Notification[]
   positionAssignments PositionAssignment[]
+  memberCharges       MemberCharge[]
+  payments            Payment[]
+  receipts            Receipt[]
 
   @@index([organizationId])
   @@index([status])
@@ -301,8 +371,9 @@ model MembershipPeriod {
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
 
-  member       Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member        Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberCharges MemberCharge[]
 
   @@unique([memberId, membershipYear])
   @@index([organizationId])
@@ -613,4 +684,283 @@ model PositionAssignmentRole {
   @@unique([positionAssignmentId, roleId])
   @@index([positionAssignmentId])
   @@index([roleId])
+}
+
+model FeeDefinition {
+  id             String @id @default(uuid())
+  organizationId String
+
+  code        String
+  name        String
+  description String?
+  type        FeeType
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  schedules    FeeSchedule[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([type])
+  @@index([isActive])
+}
+
+model FeeSchedule {
+  id              String @id @default(uuid())
+  organizationId  String
+  feeDefinitionId String
+
+  name     String
+  amount   Decimal           @db.Decimal(12, 2)
+  currency String            @default("KES")
+  status   FeeScheduleStatus @default(DRAFT)
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  constitutionalCategory ConstitutionalMembershipCategory?
+  memberCategory         MemberCategory?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  feeDefinition FeeDefinition  @relation(fields: [feeDefinitionId], references: [id], onDelete: Cascade)
+  memberCharges MemberCharge[]
+
+  @@index([organizationId])
+  @@index([feeDefinitionId])
+  @@index([status])
+  @@index([effectiveFrom, effectiveTo])
+  @@index([constitutionalCategory])
+  @@index([memberCategory])
+}
+
+model MemberCharge {
+  id                 String  @id @default(uuid())
+  organizationId     String
+  memberId           String
+  feeScheduleId      String
+  membershipPeriodId String?
+
+  description String?
+  amountDue   Decimal @db.Decimal(12, 2)
+  amountPaid  Decimal @default(0) @db.Decimal(12, 2)
+  balance     Decimal @db.Decimal(12, 2)
+
+  currency String       @default("KES")
+  status   ChargeStatus @default(UNPAID)
+
+  dueDate      DateTime?
+  waivedAt     DateTime?
+  waivedBy     String?
+  waiverReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member           Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  feeSchedule      FeeSchedule         @relation(fields: [feeScheduleId], references: [id], onDelete: Restrict)
+  membershipPeriod MembershipPeriod?   @relation(fields: [membershipPeriodId], references: [id], onDelete: SetNull)
+  allocations      PaymentAllocation[]
+
+  @@index([organizationId])
+  @@index([memberId])
+  @@index([feeScheduleId])
+  @@index([membershipPeriodId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model Payment {
+  id             String @id @default(uuid())
+  organizationId String
+  memberId       String
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("KES")
+
+  method PaymentMethod
+  status PaymentStatus @default(PENDING)
+
+  reference         String?
+  externalReference String?
+  description       String?
+
+  paidAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member       Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  allocations      PaymentAllocation[]
+  receipt          Receipt?
+  mpesaTransaction MpesaTransaction?
+
+  @@index([organizationId])
+  @@index([memberId])
+  @@index([method])
+  @@index([status])
+  @@index([reference])
+  @@index([externalReference])
+  @@index([paidAt])
+}
+
+model PaymentAllocation {
+  id        String @id @default(uuid())
+  paymentId String
+  chargeId  String
+
+  amount Decimal @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+
+  payment Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  charge  MemberCharge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, chargeId])
+  @@index([paymentId])
+  @@index([chargeId])
+}
+
+model PaymentProvider {
+  id             String @id @default(uuid())
+  organizationId String
+
+  name      String
+  code      String
+  type      PaymentProviderType
+  isActive  Boolean             @default(true)
+  isDefault Boolean             @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configurations PaymentConfiguration[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([type])
+  @@index([isActive])
+}
+
+model PaymentConfiguration {
+  id             String @id @default(uuid())
+  organizationId String
+  providerId     String
+
+  environment String @default("sandbox")
+  currency    String @default("KES")
+
+  shortcode     String?
+  tillNumber    String?
+  paybillNumber String?
+
+  enabled Boolean @default(true)
+
+  minimumAmount Decimal? @db.Decimal(12, 2)
+  maximumAmount Decimal? @db.Decimal(12, 2)
+
+  callbackUrl String?
+
+  settings Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider     PaymentProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, providerId])
+  @@index([organizationId])
+  @@index([providerId])
+  @@index([enabled])
+}
+
+model MpesaTransaction {
+  id        String @id @default(uuid())
+  paymentId String @unique
+
+  merchantRequestId  String?
+  checkoutRequestId  String?
+  mpesaReceiptNumber String?
+
+  phoneNumber       String?
+  resultCode        Int?
+  resultDescription String?
+
+  transactionDate DateTime?
+
+  callbackPayload Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([merchantRequestId])
+  @@index([checkoutRequestId])
+  @@index([mpesaReceiptNumber])
+  @@index([phoneNumber])
+}
+
+model Receipt {
+  id             String @id @default(uuid())
+  organizationId String
+  memberId       String
+  paymentId      String @unique
+
+  receiptNumber String
+  status        ReceiptStatus @default(ISSUED)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("KES")
+
+  issuedAt   DateTime  @default(now())
+  voidedAt   DateTime?
+  voidedBy   String?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member       Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  payment      Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId])
+  @@index([memberId])
+  @@index([status])
+  @@index([issuedAt])
+}
+
+model FinancialPeriod {
+  id             String @id @default(uuid())
+  organizationId String
+
+  name     String
+  code     String
+  startsAt DateTime
+  endsAt   DateTime
+  status   FinancialPeriodStatus @default(OPEN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([status])
+  @@index([startsAt, endsAt])
 }
