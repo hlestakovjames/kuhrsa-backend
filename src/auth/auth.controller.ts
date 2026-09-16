@@ -103,13 +103,6 @@ interface RegisterResponse {
     status: string;
   };
 
-  payment: {
-    required: boolean;
-    registrationFee: number;
-    annualMembershipFee: number;
-    total: number;
-    status: string;
-  };
 }
 
 @Controller('auth')

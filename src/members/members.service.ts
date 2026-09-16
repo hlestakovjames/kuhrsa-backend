@@ -847,6 +847,7 @@ export class MembersService {
     }
 
     const activationEligibleSource =
+      member.source === MemberSource.REGISTRATION ||
       member.source === MemberSource.MANUAL_ENTRY ||
       member.source === MemberSource.MIGRATION_IMPORT ||
       member.source === MemberSource.MIGRATION_MANUAL;
@@ -1154,6 +1155,7 @@ export class MembersService {
     }
 
     const activationEligibleSource =
+      member.source === MemberSource.REGISTRATION ||
       member.source === MemberSource.MANUAL_ENTRY ||
       member.source === MemberSource.MIGRATION_IMPORT ||
       member.source === MemberSource.MIGRATION_MANUAL;
@@ -1209,16 +1211,24 @@ export class MembersService {
       });
     }
 
+    const paymentRequired = member.source === MemberSource.REGISTRATION;
+
     return {
       verified: true,
       code: 'VERIFIED',
       message:
-        'Membership details verified successfully. You may now create your password.',
+        'Membership details verified successfully. You may now continue with activation.',
       member: {
         id: member.id,
         memberNumber: member.memberNumber,
         category: member.category,
+        constitutionalCategory: member.constitutionalCategory,
         activationStatus: member.activationStatus,
+        source: member.source,
+      },
+      payment: {
+        required: paymentRequired,
+        reason: paymentRequired ? 'INITIAL_REGISTRATION' : 'EXISTING_MEMBER',
       },
     };
   }

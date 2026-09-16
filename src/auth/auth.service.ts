@@ -31,9 +31,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    if (user.status !== 'ACTIVE') {
+    if (user.status !== 'ACTIVE' || !user.passwordHash) {
       throw new UnauthorizedException(
-        'Your account is not active. Please contact an administrator.',
+        'Your account is not active. Please activate your membership first.',
       );
     }
 
@@ -326,8 +326,6 @@ export class AuthService {
      * ------------------------------------------------------------
      */
 
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-
     /*
      * ------------------------------------------------------------
      * REGISTRATION TRANSACTION
@@ -354,7 +352,7 @@ export class AuthService {
           lastName,
           phone: normalizedPhone,
           email: normalizedEmail,
-          passwordHash,
+          passwordHash: null,
           status: 'INACTIVE',
           isSystemOwner: false,
         },
@@ -366,6 +364,14 @@ export class AuthService {
           userId: user.id,
 
           category: dto.category,
+          // Portal/profile classification remains category.
+          // Constitutional category controls membership rights and eligibility.
+          constitutionalCategory:
+            dto.category === MemberCategory.STUDENT
+              ? 'ORDINARY'
+              : dto.category === MemberCategory.LECTURER
+                ? 'ASSOCIATE'
+                : 'ALUMNI',
 
           registrationNumber,
           admissionNumber: null,
@@ -404,7 +410,7 @@ export class AuthService {
 
           status: 'PENDING',
           source: 'REGISTRATION',
-          activationStatus: 'NOT_REQUIRED',
+          activationStatus: 'PENDING',
         },
       });
 
@@ -458,6 +464,7 @@ export class AuthService {
         id: result.member.id,
         memberNumber: result.member.memberNumber,
         category: result.member.category,
+        constitutionalCategory: result.member.constitutionalCategory,
         registrationNumber: result.member.registrationNumber,
         yearOfStudy: result.member.yearOfStudy,
         graduationYear: result.member.graduationYear,
@@ -478,13 +485,6 @@ export class AuthService {
         status: result.membershipPeriod.status,
       },
 
-      payment: {
-        required: true,
-        registrationFee: 250,
-        annualMembershipFee: 200,
-        total: 450,
-        status: 'PENDING',
-      },
     };
   }
 

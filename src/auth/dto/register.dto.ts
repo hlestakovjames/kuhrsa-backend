@@ -7,7 +7,6 @@ import {
   IsString,
   Max,
   Min,
-  MinLength,
   ValidateIf,
 } from 'class-validator';
 
@@ -26,6 +25,10 @@ export class RegisterDto {
   category!: MemberCategory;
 
   /*
+   * ------------------------------------------------------------
+   * REGISTRATION / ADMISSION NUMBER
+   * ------------------------------------------------------------
+   *
    * Student:
    * Required university registration/admission identifier.
    *
@@ -33,8 +36,9 @@ export class RegisterDto {
    * Optional because some alumni may not remember it.
    *
    * Lecturer:
-   * Not required; lecturers use staffNumber.
+   * Not used; lecturers use staffNumber.
    */
+
   @ValidateIf(
     (dto: RegisterDto) =>
       dto.category === MemberCategory.STUDENT ||
@@ -45,8 +49,13 @@ export class RegisterDto {
   registrationNumber?: string;
 
   /*
-   * Student only: Year 1–4.
+   * ------------------------------------------------------------
+   * STUDENT
+   * ------------------------------------------------------------
+   *
+   * Student year of study: Year 1–4.
    */
+
   @ValidateIf((dto: RegisterDto) => dto.category === MemberCategory.STUDENT)
   @IsInt()
   @Min(1)
@@ -54,8 +63,13 @@ export class RegisterDto {
   yearOfStudy?: number;
 
   /*
-   * Alumni only: graduation year.
+   * ------------------------------------------------------------
+   * ALUMNI
+   * ------------------------------------------------------------
+   *
+   * Graduation year.
    */
+
   @ValidateIf((dto: RegisterDto) => dto.category === MemberCategory.ALUMNI)
   @IsInt()
   @Min(1900)
@@ -63,24 +77,35 @@ export class RegisterDto {
   graduationYear?: number;
 
   /*
-   * Alumni only: National ID.
+   * Alumni National ID.
    */
+
   @ValidateIf((dto: RegisterDto) => dto.category === MemberCategory.ALUMNI)
   @IsString()
   @IsNotEmpty()
   nationalId?: string;
 
   /*
-   * Lecturer only: Staff/Employee Number.
+   * ------------------------------------------------------------
+   * LECTURER
+   * ------------------------------------------------------------
+   *
+   * Staff/Employee Number.
    */
+
   @ValidateIf((dto: RegisterDto) => dto.category === MemberCategory.LECTURER)
   @IsString()
   @IsNotEmpty()
   staffNumber?: string;
 
   /*
-   * Student / Alumni academic information.
+   * ------------------------------------------------------------
+   * ACADEMIC INFORMATION
+   * ------------------------------------------------------------
+   *
+   * Student / Alumni.
    */
+
   @ValidateIf(
     (dto: RegisterDto) =>
       dto.category === MemberCategory.STUDENT ||
@@ -111,12 +136,19 @@ export class RegisterDto {
   department!: string;
 
   /*
-   * Lecturer only.
+   * Lecturer position/title.
    */
+
   @ValidateIf((dto: RegisterDto) => dto.category === MemberCategory.LECTURER)
   @IsString()
   @IsNotEmpty()
   position?: string;
+
+  /*
+   * ------------------------------------------------------------
+   * CONTACT INFORMATION
+   * ------------------------------------------------------------
+   */
 
   @IsEmail()
   email!: string;
@@ -133,8 +165,19 @@ export class RegisterDto {
   @IsString()
   county?: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(8)
-  password!: string;
+  /*
+   * ------------------------------------------------------------
+   * PASSWORD
+   * ------------------------------------------------------------
+   *
+   * Password is intentionally NOT collected during registration.
+   *
+   * Registration:
+   *   Member record + inactive user account
+   *
+   * Activation:
+   *   Member verification + password creation + account activation
+   *
+   * The activation DTO is responsible for collecting the password.
+   */
 }

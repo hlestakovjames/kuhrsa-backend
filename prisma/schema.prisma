@@ -20,6 +20,33 @@ enum MemberCategory {
   LECTURER
 }
 
+enum ConstitutionalMembershipCategory {
+  ORDINARY
+  ASSOCIATE
+  ALUMNI
+  HONORARY
+}
+
+enum GoodStandingStatus {
+  GOOD_STANDING
+  NOT_IN_GOOD_STANDING
+  EXTENSION_GRANTED
+}
+
+enum FinancialComplianceStatus {
+  PAID
+  PARTIALLY_PAID
+  UNPAID
+  EXTENSION_GRANTED
+  OVERDUE
+}
+
+enum DisciplinaryStatus {
+  CLEAR
+  UNDER_REVIEW
+  SANCTIONED
+}
+
 enum MemberStatus {
   PENDING
   ACTIVE
@@ -109,7 +136,6 @@ enum NotificationStatus {
   CANCELLED
 }
 
-
 enum PositionStatus {
   ACTIVE
   INACTIVE
@@ -130,7 +156,6 @@ enum PositionAssignmentStatus {
   REVOKED
 }
 
-
 model Organization {
   id        String   @id @default(uuid())
   name      String
@@ -138,15 +163,15 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users             User[]
-  members           Member[]
-  roles             Role[]
-  membershipPeriods MembershipPeriod[]
-  auditLogs         AuditLog[]
-  migrationBatches  MigrationBatch[]
-  notifications     Notification[]
-  positions         Position[]
-  terms             Term[]
+  users               User[]
+  members             Member[]
+  roles               Role[]
+  membershipPeriods   MembershipPeriod[]
+  auditLogs           AuditLog[]
+  migrationBatches    MigrationBatch[]
+  notifications       Notification[]
+  positions           Position[]
+  terms               Term[]
   positionAssignments PositionAssignment[]
 
   @@index([name])
@@ -161,7 +186,7 @@ model User {
   phone     String?
 
   email         String     @unique
-  passwordHash  String
+  passwordHash  String?
   status        UserStatus @default(ACTIVE)
   isSystemOwner Boolean    @default(false)
 
@@ -186,10 +211,19 @@ model Member {
   organizationId String
   userId         String? @unique
 
-  category           MemberCategory @default(STUDENT)
-  registrationNumber String?        @unique
+  category MemberCategory @default(STUDENT)
+
+  // Constitutional membership category.
+  // category remains the portal/profile classification.
+  constitutionalCategory ConstitutionalMembershipCategory @default(ORDINARY)
+
+  // Compliance dimensions are intentionally separate.
+  goodStandingStatus GoodStandingStatus        @default(GOOD_STANDING)
+  financialStatus    FinancialComplianceStatus @default(UNPAID)
+  disciplinaryStatus DisciplinaryStatus        @default(CLEAR)
+  registrationNumber String?                   @unique
   admissionNumber    String?
-  memberNumber       String         @unique
+  memberNumber       String                    @unique
 
   yearOfStudy    Int?
   graduationYear Int?
@@ -209,22 +243,26 @@ model Member {
   status MemberStatus @default(PENDING)
 
   source           MemberSource           @default(REGISTRATION)
-  activationStatus MemberActivationStatus @default(NOT_REQUIRED)
+  activationStatus MemberActivationStatus @default(PENDING)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization      Organization       @relation(fields: [organizationId], references: [id])
-  user              User?              @relation(fields: [userId], references: [id])
-  membershipPeriods MembershipPeriod[]
-  activation        MemberActivation?
-  notifications     Notification[]
+  organization        Organization         @relation(fields: [organizationId], references: [id])
+  user                User?                @relation(fields: [userId], references: [id])
+  membershipPeriods   MembershipPeriod[]
+  activation          MemberActivation?
+  notifications       Notification[]
   positionAssignments PositionAssignment[]
 
   @@index([organizationId])
   @@index([status])
   @@index([source])
   @@index([activationStatus])
+  @@index([constitutionalCategory])
+  @@index([goodStandingStatus])
+  @@index([financialStatus])
+  @@index([disciplinaryStatus])
 }
 
 model MemberActivation {
@@ -360,9 +398,9 @@ model Role {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization    Organization     @relation(fields: [organizationId], references: [id])
-  userRoles       UserRole[]
-  rolePermissions RolePermission[]
+  organization            Organization             @relation(fields: [organizationId], references: [id])
+  userRoles               UserRole[]
+  rolePermissions         RolePermission[]
   positionAssignmentRoles PositionAssignmentRole[]
 
   @@unique([organizationId, code])
@@ -482,7 +520,7 @@ model Notification {
 }
 
 model Position {
-  id             String         @id @default(uuid())
+  id             String @id @default(uuid())
   organizationId String
 
   name        String
@@ -504,7 +542,7 @@ model Position {
 }
 
 model Term {
-  id             String     @id @default(uuid())
+  id             String @id @default(uuid())
   organizationId String
 
   name     String
@@ -526,7 +564,7 @@ model Term {
 }
 
 model PositionAssignment {
-  id             String                   @id @default(uuid())
+  id             String @id @default(uuid())
   organizationId String
   memberId       String
   positionId     String
@@ -537,7 +575,7 @@ model PositionAssignment {
   startsAt DateTime
   endsAt   DateTime
 
-  assignedAt DateTime @default(now())
+  assignedAt DateTime  @default(now())
   assignedBy String?
   endedAt    DateTime?
   revokedAt  DateTime?
@@ -546,8 +584,8 @@ model PositionAssignment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  member       Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member       Member                   @relation(fields: [memberId], references: [id], onDelete: Cascade)
   position     Position                 @relation(fields: [positionId], references: [id], onDelete: Cascade)
   term         Term                     @relation(fields: [termId], references: [id], onDelete: Cascade)
   roles        PositionAssignmentRole[]
