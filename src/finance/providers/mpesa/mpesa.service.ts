@@ -31,24 +31,27 @@ export class MpesaService implements PaymentProvider {
   async initiateStkPush(
     request: PaymentProviderStkRequest,
   ): Promise<PaymentProviderStkResponse> {
-    const organizationId = await this.resolveOrganizationId(request.paymentId);
+    const organizationId = await this.resolveOrganizationId(
+      request.paymentId,
+    );
 
-    const configuration = await this.prisma.paymentConfiguration.findFirst({
-      where: {
-        organizationId,
-        provider: {
-          type: 'MPESA',
-          isActive: true,
+    const configuration =
+      await this.prisma.paymentConfiguration.findFirst({
+        where: {
+          organizationId,
+          provider: {
+            type: 'MPESA',
+            isActive: true,
+          },
+          enabled: true,
         },
-        enabled: true,
-      },
-      include: {
-        provider: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+        include: {
+          provider: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
 
     if (!configuration) {
       throw new BadRequestException(
@@ -56,8 +59,10 @@ export class MpesaService implements PaymentProvider {
       );
     }
 
-    if (configuration.environment !== 'sandbox' &&
-        configuration.environment !== 'production') {
+    if (
+      configuration.environment !== 'sandbox' &&
+      configuration.environment !== 'production'
+    ) {
       throw new BadRequestException(
         'M-Pesa environment must be sandbox or production.',
       );
@@ -85,21 +90,31 @@ export class MpesaService implements PaymentProvider {
         ? Number(configuration.maximumAmount)
         : null;
 
-    if (minimumAmount !== null && request.amount < minimumAmount) {
+    if (
+      minimumAmount !== null &&
+      request.amount < minimumAmount
+    ) {
       throw new BadRequestException(
         `Payment amount must be at least ${minimumAmount}.`,
       );
     }
 
-    if (maximumAmount !== null && request.amount > maximumAmount) {
+    if (
+      maximumAmount !== null &&
+      request.amount > maximumAmount
+    ) {
       throw new BadRequestException(
         `Payment amount must not exceed ${maximumAmount}.`,
       );
     }
 
-    const phoneNumber = this.normalizePhoneNumber(request.phoneNumber);
+    const phoneNumber = this.normalizePhoneNumber(
+      request.phoneNumber,
+    );
 
-    const token = await this.getAccessToken(configuration.environment);
+    const token = await this.getAccessToken(
+      configuration.environment,
+    );
 
     const timestamp = this.getTimestamp();
 
@@ -145,15 +160,19 @@ export class MpesaService implements PaymentProvider {
       const body = await response.text();
 
       throw new BadRequestException(
-        `M-Pesa STK request failed: ${body || response.statusText}`,
+        `M-Pesa STK request failed: ${
+          body || response.statusText
+        }`,
       );
     }
 
-    const data = (await response.json()) as MpesaStkResponse;
+    const data =
+      (await response.json()) as MpesaStkResponse;
 
     if (data.ResponseCode !== '0') {
       throw new BadRequestException(
-        data.ResponseDescription || 'M-Pesa rejected the STK request.',
+        data.ResponseDescription ||
+          'M-Pesa rejected the STK request.',
       );
     }
 
@@ -179,8 +198,10 @@ export class MpesaService implements PaymentProvider {
 
     const payment = await this.prisma.payment.findFirst({
       where: {
+        method: PaymentMethod.MPESA,
         mpesaTransaction: {
-          checkoutRequestId: callback.CheckoutRequestID,
+          checkoutRequestId:
+            callback.CheckoutRequestID,
         },
       },
       include: {
@@ -200,110 +221,234 @@ export class MpesaService implements PaymentProvider {
 
     const successful = callback.ResultCode === 0;
 
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      /*
-       * Always persist the callback details.
-       * Duplicate callbacks update the same transaction
-       * rather than creating another transaction record.
-       */
-      await tx.mpesaTransaction.update({
-        where: {
-          paymentId: payment.id,
+    /*
+     * Verify the callback amount against the original
+     * payment amount whenever Safaricom supplies it.
+     *
+     * A mismatch must never be allowed to complete
+     * the payment.
+     */
+    if (
+      metadata.amount !== undefined &&
+      Number(metadata.amount) !== Number(payment.amount)
+    ) {
+      await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          await tx.mpesaTransaction.update({
+            where: {
+              paymentId: payment.id,
+            },
+            data: {
+              merchantRequestId:
+                callback.MerchantRequestID ??
+                payment.mpesaTransaction!
+                  .merchantRequestId,
+
+              checkoutRequestId:
+                callback.CheckoutRequestID,
+
+              mpesaReceiptNumber:
+                metadata.mpesaReceiptNumber ??
+                payment.mpesaTransaction!
+                  .mpesaReceiptNumber,
+
+              phoneNumber:
+                metadata.phoneNumber ??
+                payment.mpesaTransaction!
+                  .phoneNumber,
+
+              resultCode:
+                callback.ResultCode !== undefined
+                  ? callback.ResultCode
+                  : null,
+
+              resultDescription:
+                `Callback amount mismatch. Expected ${
+                  payment.amount
+                }, received ${metadata.amount}.`,
+
+              transactionDate:
+                metadata.transactionDate ??
+                payment.mpesaTransaction!
+                  .transactionDate,
+
+              callbackPayload:
+                payload as Prisma.InputJsonValue,
+            },
+          });
+
+          if (
+            payment.status !== PaymentStatus.COMPLETED &&
+            payment.status !== PaymentStatus.REFUNDED &&
+            payment.status !==
+              PaymentStatus.PARTIALLY_REFUNDED &&
+            payment.status !== PaymentStatus.CANCELLED
+          ) {
+            await tx.payment.updateMany({
+              where: {
+                id: payment.id,
+                status: {
+                  notIn: [
+                    PaymentStatus.COMPLETED,
+                    PaymentStatus.REFUNDED,
+                    PaymentStatus.PARTIALLY_REFUNDED,
+                    PaymentStatus.CANCELLED,
+                  ],
+                },
+              },
+              data: {
+                status: PaymentStatus.FAILED,
+                externalReference:
+                  callback.CheckoutRequestID,
+              },
+            });
+          }
         },
-        data: {
-          merchantRequestId:
-            callback.MerchantRequestID ??
-            payment.mpesaTransaction!.merchantRequestId,
+      );
 
-          checkoutRequestId:
-            callback.CheckoutRequestID,
+      return {
+        received: true,
+      };
+    }
 
-          mpesaReceiptNumber:
-            metadata.mpesaReceiptNumber ??
-            payment.mpesaTransaction!.mpesaReceiptNumber,
-
-          phoneNumber:
-            metadata.phoneNumber ??
-            payment.mpesaTransaction!.phoneNumber,
-
-          resultCode:
-            callback.ResultCode !== undefined
-              ? callback.ResultCode
-              : null,
-
-          resultDescription:
-            callback.ResultDesc ?? null,
-
-          transactionDate:
-            metadata.transactionDate ??
-            payment.mpesaTransaction!.transactionDate,
-
-          callbackPayload:
-            payload as Prisma.InputJsonValue,
-        },
-      });
-
-      /*
-       * Refunded payments are terminal from the
-       * payment-processing perspective. A delayed or
-       * duplicate callback must not restore them.
-       */
-      if (
-        payment.status === PaymentStatus.REFUNDED ||
-        payment.status ===
-          PaymentStatus.PARTIALLY_REFUNDED
-      ) {
-        return;
-      }
-
-      /*
-       * A completed payment must never be reverted
-       * to FAILED by a duplicate or delayed callback.
-       */
-      if (
-        payment.status === PaymentStatus.COMPLETED
-      ) {
-        return;
-      }
-
-      /*
-       * Successful Safaricom callback.
-       */
-      if (successful) {
-        await tx.payment.update({
+    await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        /*
+         * Always persist callback details.
+         *
+         * Duplicate callbacks update the same
+         * MpesaTransaction instead of creating another
+         * transaction.
+         */
+        await tx.mpesaTransaction.update({
           where: {
-            id: payment.id,
+            paymentId: payment.id,
           },
           data: {
-            status: PaymentStatus.COMPLETED,
+            merchantRequestId:
+              callback.MerchantRequestID ??
+              payment.mpesaTransaction!
+                .merchantRequestId,
 
-            paidAt:
-              metadata.transactionDate ??
-              new Date(),
-
-            reference:
-              metadata.mpesaReceiptNumber ??
-              payment.reference,
-
-            externalReference:
+            checkoutRequestId:
               callback.CheckoutRequestID,
+
+            mpesaReceiptNumber:
+              metadata.mpesaReceiptNumber ??
+              payment.mpesaTransaction!
+                .mpesaReceiptNumber,
+
+            phoneNumber:
+              metadata.phoneNumber ??
+              payment.mpesaTransaction!
+                .phoneNumber,
+
+            resultCode:
+              callback.ResultCode !== undefined
+                ? callback.ResultCode
+                : null,
+
+            resultDescription:
+              callback.ResultDesc ?? null,
+
+            transactionDate:
+              metadata.transactionDate ??
+              payment.mpesaTransaction!
+                .transactionDate,
+
+            callbackPayload:
+              payload as Prisma.InputJsonValue,
           },
         });
 
-        return;
-      }
+        /*
+         * Refunded payments are terminal from the
+         * payment-processing perspective.
+         */
+        if (
+          payment.status === PaymentStatus.REFUNDED ||
+          payment.status ===
+            PaymentStatus.PARTIALLY_REFUNDED
+        ) {
+          return;
+        }
 
-      /*
-       * Non-zero ResultCode means the STK request
-       * did not complete successfully.
-       */
-      if (
-        payment.status !== PaymentStatus.FAILED &&
-        payment.status !== PaymentStatus.CANCELLED
-      ) {
-        await tx.payment.update({
+        /*
+         * A cancelled payment must not be revived by
+         * a delayed M-Pesa callback.
+         */
+        if (
+          payment.status === PaymentStatus.CANCELLED
+        ) {
+          return;
+        }
+
+        /*
+         * A completed payment must never be reverted
+         * to FAILED by a duplicate or delayed callback.
+         */
+        if (
+          payment.status === PaymentStatus.COMPLETED
+        ) {
+          return;
+        }
+
+        /*
+         * Successful Safaricom callback.
+         *
+         * The conditional status check protects against
+         * concurrent duplicate or out-of-order callbacks.
+         */
+        if (successful) {
+          await tx.payment.updateMany({
+            where: {
+              id: payment.id,
+              status: {
+                notIn: [
+                  PaymentStatus.COMPLETED,
+                  PaymentStatus.REFUNDED,
+                  PaymentStatus.PARTIALLY_REFUNDED,
+                  PaymentStatus.CANCELLED,
+                ],
+              },
+            },
+            data: {
+              status: PaymentStatus.COMPLETED,
+
+              paidAt:
+                metadata.transactionDate ??
+                new Date(),
+
+              reference:
+                metadata.mpesaReceiptNumber ??
+                payment.reference,
+
+              externalReference:
+                callback.CheckoutRequestID,
+            },
+          });
+
+          return;
+        }
+
+        /*
+         * Non-zero ResultCode means the STK request
+         * did not complete successfully.
+         *
+         * A delayed failure callback cannot overwrite
+         * a payment that has already completed.
+         */
+        await tx.payment.updateMany({
           where: {
             id: payment.id,
+            status: {
+              notIn: [
+                PaymentStatus.COMPLETED,
+                PaymentStatus.REFUNDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+                PaymentStatus.CANCELLED,
+              ],
+            },
           },
           data: {
             status: PaymentStatus.FAILED,
@@ -311,8 +456,8 @@ export class MpesaService implements PaymentProvider {
               callback.CheckoutRequestID,
           },
         });
-      }
-    });
+      },
+    );
 
     return {
       received: true,
@@ -332,7 +477,9 @@ export class MpesaService implements PaymentProvider {
     });
 
     if (!payment) {
-      throw new NotFoundException('Payment not found.');
+      throw new NotFoundException(
+        'Payment not found.',
+      );
     }
 
     return payment.organizationId;
@@ -348,8 +495,11 @@ export class MpesaService implements PaymentProvider {
       return this.accessToken;
     }
 
-    const consumerKey = process.env.MPESA_CONSUMER_KEY;
-    const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+    const consumerKey =
+      process.env.MPESA_CONSUMER_KEY;
+
+    const consumerSecret =
+      process.env.MPESA_CONSUMER_SECRET;
 
     if (!consumerKey || !consumerSecret) {
       throw new InternalServerErrorException(
@@ -391,15 +541,19 @@ export class MpesaService implements PaymentProvider {
 
     this.accessToken = data.access_token;
 
-    const expiresInSeconds = Number(data.expires_in) || 3600;
+    const expiresInSeconds =
+      Number(data.expires_in) || 3600;
 
     this.accessTokenExpiresAt =
-      Date.now() + Math.max(expiresInSeconds - 60, 60) * 1000;
+      Date.now() +
+      Math.max(expiresInSeconds - 60, 60) * 1000;
 
     return this.accessToken;
   }
 
-  private normalizePhoneNumber(phoneNumber: string): string {
+  private normalizePhoneNumber(
+    phoneNumber: string,
+  ): string {
     const value = phoneNumber.trim();
 
     if (value.startsWith('+254')) {
@@ -410,7 +564,10 @@ export class MpesaService implements PaymentProvider {
       return value;
     }
 
-    if (value.startsWith('07') || value.startsWith('01')) {
+    if (
+      value.startsWith('07') ||
+      value.startsWith('01')
+    ) {
       return `254${value.substring(1)}`;
     }
 
@@ -435,33 +592,57 @@ export class MpesaService implements PaymentProvider {
   }
 
   private extractMetadata(
-    items: Array<{ Name: string; Value?: string | number }>,
+    items: Array<{
+      Name: string;
+      Value?: string | number;
+    }>,
   ) {
     const get = (name: string) =>
-      items.find((item) => item.Name === name)?.Value;
+      items.find(
+        (item) => item.Name === name,
+      )?.Value;
 
     const transactionDateValue =
       get('TransactionDate');
 
     let transactionDate: Date | null = null;
 
-    if (transactionDateValue !== undefined) {
-      const value = String(transactionDateValue);
+    if (
+      transactionDateValue !== undefined
+    ) {
+      const value = String(
+        transactionDateValue,
+      );
 
       /*
        * Safaricom TransactionDate format:
        * YYYYMMDDHHmmss
        */
       if (/^\d{14}$/.test(value)) {
-        const year = Number(value.substring(0, 4));
+        const year = Number(
+          value.substring(0, 4),
+        );
+
         const month =
-          Number(value.substring(4, 6)) - 1;
-        const day = Number(value.substring(6, 8));
-        const hour = Number(value.substring(8, 10));
-        const minute =
-          Number(value.substring(10, 12));
-        const second =
-          Number(value.substring(12, 14));
+          Number(
+            value.substring(4, 6),
+          ) - 1;
+
+        const day = Number(
+          value.substring(6, 8),
+        );
+
+        const hour = Number(
+          value.substring(8, 10),
+        );
+
+        const minute = Number(
+          value.substring(10, 12),
+        );
+
+        const second = Number(
+          value.substring(12, 14),
+        );
 
         const parsed = new Date(
           Date.UTC(
@@ -476,11 +657,13 @@ export class MpesaService implements PaymentProvider {
 
         /*
          * Confirm the resulting date is valid and
-         * that JavaScript did not normalize invalid
+         * JavaScript did not normalize invalid
          * calendar values.
          */
         if (
-          !Number.isNaN(parsed.getTime()) &&
+          !Number.isNaN(
+            parsed.getTime(),
+          ) &&
           parsed.getUTCFullYear() === year &&
           parsed.getUTCMonth() === month &&
           parsed.getUTCDate() === day &&
@@ -494,22 +677,30 @@ export class MpesaService implements PaymentProvider {
     }
 
     const amount = get('Amount');
+
     const mpesaReceiptNumber =
       get('MpesaReceiptNumber');
-    const phoneNumber = get('PhoneNumber');
+
+    const phoneNumber =
+      get('PhoneNumber');
+
     const balance = get('Balance');
 
     return {
       amount,
+
       mpesaReceiptNumber:
         mpesaReceiptNumber !== undefined
           ? String(mpesaReceiptNumber)
           : null,
+
       transactionDate,
+
       phoneNumber:
         phoneNumber !== undefined
           ? String(phoneNumber)
           : null,
+
       balance,
     };
   }
