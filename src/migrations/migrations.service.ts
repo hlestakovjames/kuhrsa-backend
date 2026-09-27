@@ -31,6 +31,7 @@ interface MigrationValidationResult {
   category: MemberCategory | null;
 
   firstName: string | null;
+  middleName: string | null;
   lastName: string | null;
 
   registrationNumber: string | null;
@@ -93,6 +94,11 @@ export class MigrationsService {
       {
         header: 'First Name',
         key: 'first_name',
+        width: 20,
+      },
+      {
+        header: 'Middle Name',
+        key: 'middle_name',
         width: 20,
       },
       {
@@ -173,8 +179,9 @@ export class MigrationsService {
     ];
 
     worksheet.addRow([
+      'John',
+      'Peter',
       'Example',
-      'Student',
       'STUDENT',
       'KSU/XXX/0001',
       '',
@@ -192,7 +199,8 @@ export class MigrationsService {
     ]);
 
     worksheet.addRow([
-      'Example',
+      'Jane',
+      'Wanjiku',
       'Alumni',
       'ALUMNI',
       '',
@@ -211,7 +219,8 @@ export class MigrationsService {
     ]);
 
     worksheet.addRow([
-      'Example',
+      'David',
+      '',
       'Lecturer',
       'LECTURER',
       '',
@@ -235,7 +244,7 @@ export class MigrationsService {
 
     worksheet.autoFilter = {
       from: 'A1',
-      to: 'P1',
+      to: 'Q1',
     };
 
     const workbookBuffer = await workbook.xlsx.writeBuffer();
@@ -322,6 +331,8 @@ export class MigrationsService {
           category: result.category,
 
           firstName: result.firstName,
+
+          middleName: result.middleName,
 
           lastName: result.lastName,
 
@@ -567,6 +578,11 @@ export class MigrationsService {
       {
         header: 'First Name',
         key: 'firstName',
+        width: 20,
+      },
+      {
+        header: 'Middle Name',
+        key: 'middleName',
         width: 20,
       },
       {
@@ -1011,6 +1027,8 @@ export class MigrationsService {
 
             firstName: row.firstName ?? '',
 
+            middleName: row.middleName ?? null,
+
             lastName: row.lastName ?? '',
 
             email: row.email,
@@ -1262,6 +1280,8 @@ export class MigrationsService {
 
     const firstName = this.toStringValue(row.first_name);
 
+    const middleName = this.toStringValue(row.middle_name);
+
     const lastName = this.toStringValue(row.last_name);
 
     const registrationNumber = this.toStringValue(row.registration_number);
@@ -1299,6 +1319,7 @@ export class MigrationsService {
       category,
 
       firstName,
+      middleName,
       lastName,
 
       registrationNumber,
@@ -1586,6 +1607,7 @@ export class MigrationsService {
       category,
 
       firstName,
+      middleName,
       lastName,
 
       registrationNumber,

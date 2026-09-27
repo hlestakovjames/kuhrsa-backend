@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  ConstitutionalMembershipCategory,
+  DisciplinaryStatus,
+  FinancialComplianceStatus,
+  GoodStandingStatus,
   MemberActivationStatus,
   MemberCategory,
   MemberSource,
@@ -26,6 +30,11 @@ interface SafeMemberRecord {
   id: string;
   organizationId: string;
   category: MemberCategory;
+
+  constitutionalCategory: ConstitutionalMembershipCategory;
+  goodStandingStatus: GoodStandingStatus;
+  financialStatus: FinancialComplianceStatus;
+  disciplinaryStatus: DisciplinaryStatus;
 
   registrationNumber?: string | null;
   admissionNumber?: string | null;
@@ -61,6 +70,7 @@ interface SafeMemberRecord {
   user?: {
     id: string;
     firstName: string | null;
+    middleName: string | null;
     lastName: string | null;
     email: string;
     status: string;
@@ -90,6 +100,7 @@ export class MembersService {
           select: {
             id: true,
             firstName: true,
+            middleName: true,
             lastName: true,
             email: true,
             status: true,
@@ -114,6 +125,7 @@ export class MembersService {
           select: {
             id: true,
             firstName: true,
+            middleName: true,
             lastName: true,
             email: true,
             status: true,
@@ -246,6 +258,7 @@ export class MembersService {
             data: {
               organizationId,
               firstName: dto.firstName.trim(),
+              middleName: dto.middleName?.trim() || null,
               lastName: dto.lastName.trim(),
               email,
               passwordHash,
@@ -264,6 +277,7 @@ export class MembersService {
             },
             data: {
               firstName: dto.firstName.trim(),
+              middleName: dto.middleName?.trim() || null,
               lastName: dto.lastName.trim(),
             },
           });
@@ -324,6 +338,7 @@ export class MembersService {
               select: {
                 id: true,
                 firstName: true,
+                middleName: true,
                 lastName: true,
                 email: true,
                 status: true,
@@ -465,11 +480,65 @@ export class MembersService {
       );
     }
 
-    let registrationNumber: string | undefined;
+    const normalizeString = (value?: string) => {
+      if (value === undefined) {
+        return undefined;
+      }
 
-    if (dto.registrationNumber !== undefined) {
-      registrationNumber = dto.registrationNumber.trim();
+      const normalized = value.trim();
 
+      return normalized.length > 0 ? normalized : null;
+    };
+
+    const registrationNumber =
+      dto.registrationNumber !== undefined
+        ? normalizeString(dto.registrationNumber)
+        : undefined;
+
+    const admissionNumber =
+      dto.admissionNumber !== undefined
+        ? normalizeString(dto.admissionNumber)
+        : undefined;
+
+    const nationalId =
+      dto.nationalId !== undefined
+        ? normalizeString(dto.nationalId)
+        : undefined;
+
+    const staffNumber =
+      dto.staffNumber !== undefined
+        ? normalizeString(dto.staffNumber)
+        : undefined;
+
+    const programme =
+      dto.programme !== undefined ? normalizeString(dto.programme) : undefined;
+
+    const faculty =
+      dto.faculty !== undefined ? normalizeString(dto.faculty) : undefined;
+
+    const department =
+      dto.department !== undefined
+        ? normalizeString(dto.department)
+        : undefined;
+
+    const position =
+      dto.position !== undefined ? normalizeString(dto.position) : undefined;
+
+    const phone =
+      dto.phone !== undefined ? normalizeString(dto.phone) : undefined;
+
+    const address =
+      dto.address !== undefined ? normalizeString(dto.address) : undefined;
+
+    const county =
+      dto.county !== undefined ? normalizeString(dto.county) : undefined;
+
+    const email =
+      dto.email !== undefined
+        ? dto.email.trim().toLowerCase()
+        : undefined;
+
+    if (registrationNumber !== undefined && registrationNumber !== null) {
       if (registrationNumber !== existingMember.registrationNumber) {
         const duplicate = await this.prisma.member.findUnique({
           where: {
@@ -485,59 +554,135 @@ export class MembersService {
       }
     }
 
-    let newUserId: string | undefined;
-
-    if (dto.email !== undefined) {
-      const email = dto.email.toLowerCase().trim();
-
-      const user = await this.prisma.user.findUnique({
-        where: {
-          email,
-        },
-        select: {
-          id: true,
-          member: {
-            select: {
-              id: true,
-            },
+    if (nationalId !== undefined && nationalId !== null) {
+      if (nationalId !== existingMember.nationalId) {
+        const duplicate = await this.prisma.member.findUnique({
+          where: {
+            nationalId,
           },
-        },
-      });
+        });
 
-      if (!user) {
-        throw new NotFoundException('No user exists with the supplied email.');
+        if (duplicate && duplicate.id !== id) {
+          throw new ConflictException(
+            'A member with this National ID already exists.',
+          );
+        }
       }
+    }
 
-      if (user.member && user.member.id !== existingMember.id) {
-        throw new ConflictException(
-          'This user is already linked to another member record.',
-        );
+    if (staffNumber !== undefined && staffNumber !== null) {
+      if (staffNumber !== existingMember.staffNumber) {
+        const duplicate = await this.prisma.member.findUnique({
+          where: {
+            staffNumber,
+          },
+        });
+
+        if (duplicate && duplicate.id !== id) {
+          throw new ConflictException(
+            'A member with this staff/employee number already exists.',
+          );
+        }
       }
-
-      newUserId = user.id;
     }
 
     const oldValue = {
       category: existingMember.category,
+      constitutionalCategory: existingMember.constitutionalCategory,
       registrationNumber: existingMember.registrationNumber,
+      admissionNumber: existingMember.admissionNumber,
+      nationalId: existingMember.nationalId,
+      staffNumber: existingMember.staffNumber,
+      yearOfStudy: existingMember.yearOfStudy,
+      graduationYear: existingMember.graduationYear,
+      programme: existingMember.programme,
+      faculty: existingMember.faculty,
+      department: existingMember.department,
+      position: existingMember.position,
+      email: existingMember.email,
+      phone: existingMember.phone,
+      address: existingMember.address,
+      county: existingMember.county,
       memberNumber: existingMember.memberNumber,
       status: existingMember.status,
+      source: existingMember.source,
+      activationStatus: existingMember.activationStatus,
       userId: existingMember.userId,
     };
 
     const updatedMember = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {
         const data: {
-          registrationNumber?: string;
-          userId?: string;
+          registrationNumber?: string | null;
+          admissionNumber?: string | null;
+          nationalId?: string | null;
+          staffNumber?: string | null;
+          yearOfStudy?: number | null;
+          graduationYear?: number | null;
+          programme?: string | null;
+          faculty?: string | null;
+          department?: string | null;
+          position?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          address?: string | null;
+          county?: string | null;
         } = {};
 
         if (registrationNumber !== undefined) {
           data.registrationNumber = registrationNumber;
         }
 
-        if (newUserId !== undefined) {
-          data.userId = newUserId;
+        if (admissionNumber !== undefined) {
+          data.admissionNumber = admissionNumber;
+        }
+
+        if (nationalId !== undefined) {
+          data.nationalId = nationalId;
+        }
+
+        if (staffNumber !== undefined) {
+          data.staffNumber = staffNumber;
+        }
+
+        if (dto.yearOfStudy !== undefined) {
+          data.yearOfStudy = dto.yearOfStudy;
+        }
+
+        if (dto.graduationYear !== undefined) {
+          data.graduationYear = dto.graduationYear;
+        }
+
+        if (programme !== undefined) {
+          data.programme = programme;
+        }
+
+        if (faculty !== undefined) {
+          data.faculty = faculty;
+        }
+
+        if (department !== undefined) {
+          data.department = department;
+        }
+
+        if (position !== undefined) {
+          data.position = position;
+        }
+
+        if (email !== undefined) {
+          data.email = email;
+        }
+
+        if (phone !== undefined) {
+          data.phone = phone;
+        }
+
+        if (address !== undefined) {
+          data.address = address;
+        }
+
+        if (county !== undefined) {
+          data.county = county;
         }
 
         const member = await tx.member.update({
@@ -551,6 +696,7 @@ export class MembersService {
               select: {
                 id: true,
                 firstName: true,
+                middleName: true,
                 lastName: true,
                 email: true,
                 status: true,
@@ -570,9 +716,25 @@ export class MembersService {
             oldValue,
             newValue: {
               category: member.category,
+              constitutionalCategory: member.constitutionalCategory,
               registrationNumber: member.registrationNumber,
+              admissionNumber: member.admissionNumber,
+              nationalId: member.nationalId,
+              staffNumber: member.staffNumber,
+              yearOfStudy: member.yearOfStudy,
+              graduationYear: member.graduationYear,
+              programme: member.programme,
+              faculty: member.faculty,
+              department: member.department,
+              position: member.position,
+              email: member.email,
+              phone: member.phone,
+              address: member.address,
+              county: member.county,
               memberNumber: member.memberNumber,
               status: member.status,
+              source: member.source,
+              activationStatus: member.activationStatus,
               userId: member.userId,
             },
           },
@@ -652,11 +814,15 @@ export class MembersService {
       },
       select: {
         firstName: true,
+        middleName: true,
         lastName: true,
       },
     });
 
     const firstName = migrationRow?.firstName?.trim() || 'KUHRSA';
+
+    const middleName =
+      migrationRow?.middleName?.trim() || null;
 
     const lastName = migrationRow?.lastName?.trim() || 'Member';
 
@@ -676,6 +842,7 @@ export class MembersService {
           data: {
             organizationId,
             firstName,
+            middleName,
             lastName,
             email,
             passwordHash,
@@ -719,6 +886,7 @@ export class MembersService {
               select: {
                 id: true,
                 firstName: true,
+                middleName: true,
                 lastName: true,
                 email: true,
                 status: true,
@@ -1337,6 +1505,7 @@ export class MembersService {
               select: {
                 id: true,
                 firstName: true,
+                middleName: true,
                 lastName: true,
                 email: true,
                 status: true,
@@ -1459,6 +1628,7 @@ export class MembersService {
               select: {
                 id: true,
                 firstName: true,
+                middleName: true,
                 lastName: true,
                 email: true,
                 status: true,
@@ -1502,6 +1672,14 @@ export class MembersService {
       organizationId: member.organizationId,
 
       category: member.category,
+
+      constitutionalCategory: member.constitutionalCategory,
+
+      goodStandingStatus: member.goodStandingStatus,
+
+      financialStatus: member.financialStatus,
+
+      disciplinaryStatus: member.disciplinaryStatus,
 
       registrationNumber: member.registrationNumber ?? null,
 
@@ -1556,6 +1734,8 @@ export class MembersService {
             id: member.user.id,
 
             firstName: member.user.firstName ?? null,
+
+            middleName: member.user.middleName ?? null,
 
             lastName: member.user.lastName ?? null,
 
