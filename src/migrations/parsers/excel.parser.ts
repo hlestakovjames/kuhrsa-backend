@@ -101,6 +101,7 @@ export class ExcelParser {
       faculty: 'faculty',
 
       first_name: 'first_name',
+      middle_name: 'middle_name',
       last_name: 'last_name',
 
       national_id: 'national_id',

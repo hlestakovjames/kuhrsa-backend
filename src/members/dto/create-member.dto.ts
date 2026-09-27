@@ -128,6 +128,11 @@ export class CreateMemberDto {
   @MinLength(1)
   firstName!: string;
 
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  middleName?: string;
+
   @IsString()
   @IsNotEmpty()
   @MinLength(1)
