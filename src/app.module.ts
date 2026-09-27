@@ -11,6 +11,7 @@ import { MembersModule } from './members/members.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { MigrationsModule } from './migrations/migrations.module';
+import { ReportsModule } from './reports/reports.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { GovernanceModule } from './governance/governance.module';
 import { FinanceModule } from './finance/finance.module';
@@ -33,6 +34,7 @@ import { FinanceModule } from './finance/finance.module';
     DashboardModule,
     HealthModule,
     MigrationsModule,
+    ReportsModule,
     NotificationsModule,
     GovernanceModule,
     FinanceModule,
