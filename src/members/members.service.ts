@@ -480,9 +480,15 @@ export class MembersService {
       );
     }
 
-    const normalizeString = (value?: string) => {
+    const normalizeString = (
+      value: string | null | undefined,
+    ) => {
       if (value === undefined) {
         return undefined;
+      }
+
+      if (value === null) {
+        return null;
       }
 
       const normalized = value.trim();
@@ -535,7 +541,7 @@ export class MembersService {
 
     const email =
       dto.email !== undefined
-        ? dto.email.trim().toLowerCase()
+        ? normalizeString(dto.email)?.toLowerCase() ?? null
         : undefined;
 
     if (registrationNumber !== undefined && registrationNumber !== null) {
