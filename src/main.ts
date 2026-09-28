@@ -19,10 +19,19 @@ async function bootstrap() {
 
   const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 
+  const allowedOrigins = isProduction
+    ? [
+        frontendUrl,
+        'https://kuhrsa.vercel.app',
+        'https://kuhrsa-portal.vercel.app',
+      ]
+    : [
+        'http://localhost:3000',
+        'http://localhost:3001',
+      ];
+
   app.enableCors({
-    origin: isProduction
-      ? frontendUrl
-      : ['http://localhost:3000', 'http://localhost:3001'],
+    origin: allowedOrigins,
     credentials: true,
   });
 
