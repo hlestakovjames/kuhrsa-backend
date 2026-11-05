@@ -62,7 +62,10 @@ describe('PaymentAllocationsService allocation integrity', () => {
     };
 
     prisma = {
-      $transaction: jest.fn((callback) => callback(tx)),
+      $transaction: jest.fn(
+        async (callback: (transaction: typeof tx) => Promise<unknown>) =>
+          callback(tx),
+      ),
     };
 
     service = new PaymentAllocationsService(
