@@ -20,6 +20,7 @@ describe('PaymentsService status lifecycle', () => {
       create: jest.Mock;
       update: jest.Mock;
     };
+    $transaction: jest.Mock;
   };
 
   const existingPayment = {
@@ -45,6 +46,14 @@ describe('PaymentsService status lifecycle', () => {
     paymentCreate = jest.fn().mockResolvedValue(existingPayment);
     paymentUpdate = jest.fn().mockResolvedValue(existingPayment);
 
+    const transactionClient = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      payment: {
+        findFirst: paymentFindFirst,
+        update: paymentUpdate,
+      },
+    };
+
     prisma = {
       member: {
         findFirst: memberFindFirst,
@@ -54,6 +63,11 @@ describe('PaymentsService status lifecycle', () => {
         create: paymentCreate,
         update: paymentUpdate,
       },
+      $transaction: jest.fn(
+        async (
+          callback: (client: typeof transactionClient) => Promise<unknown>,
+        ) => callback(transactionClient),
+      ),
     };
 
     service = new PaymentsService(
