@@ -102,6 +102,14 @@ export class ReceiptsService {
     dto: CreateReceiptDto,
   ) {
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payment"
+        WHERE "id" = ${dto.paymentId}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
+
       const payment =
         await tx.payment.findFirst({
           where: {
@@ -181,37 +189,57 @@ export class ReceiptsService {
     dto: VoidReceiptDto,
     userId: string,
   ) {
-    const receipt = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Receipt"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (receipt.status === ReceiptStatus.VOIDED) {
-      return receipt;
-    }
+      const receipt = await tx.receipt.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+        include: {
+          member: true,
+          payment: true,
+        },
+      });
 
-    const reason = dto.reason.trim();
+      if (!receipt) {
+        throw new NotFoundException('Receipt not found.');
+      }
 
-    if (!reason) {
-      throw new BadRequestException(
-        'A reason is required when voiding a receipt.',
-      );
-    }
+      if (receipt.status === ReceiptStatus.VOIDED) {
+        return receipt;
+      }
 
-    return this.prisma.receipt.update({
-      where: {
-        id: receipt.id,
-      },
-      data: {
-        status: ReceiptStatus.VOIDED,
-        voidedAt: new Date(),
-        voidedBy: userId,
-        voidReason: reason,
-      },
-      include: {
-        member: true,
-        payment: true,
-      },
+      const reason = dto.reason.trim();
+
+      if (!reason) {
+        throw new BadRequestException(
+          'A reason is required when voiding a receipt.',
+        );
+      }
+
+      return tx.receipt.update({
+        where: {
+          id: receipt.id,
+        },
+        data: {
+          status: ReceiptStatus.VOIDED,
+          voidedAt: new Date(),
+          voidedBy: userId,
+          voidReason: reason,
+        },
+        include: {
+          member: true,
+          payment: true,
+        },
+      });
     });
   }
 
