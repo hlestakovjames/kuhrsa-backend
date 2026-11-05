@@ -44,7 +44,7 @@ describe('RolesService', () => {
           userId,
           roleId,
         }),
-        update: jest.fn(),
+        update: jest.fn().mockResolvedValue({ id: 'user-role-id', userId, roleId }),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-id' }),
@@ -162,6 +162,40 @@ describe('RolesService', () => {
 
     expect(prisma.role.findUnique).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('allows reappointment when the previous Administrator term does not overlap', async () => {
+    role.code = 'ADMINISTRATOR';
+    role.name = 'Administrator';
+    tx.userRole.findUnique.mockResolvedValue({
+      id: 'previous-user-role-id',
+      userId,
+      roleId,
+      startsAt: new Date(Date.now() - 10 * 86_400_000),
+      endsAt: new Date(Date.now() - 86_400_000),
+      revokedAt: null,
+    });
+
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 86_400_000).toISOString();
+
+    await expect(
+      service.assignUser(
+        roleId,
+        userId,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: roleId }));
+
+    expect(tx.userRole.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'previous-user-role-id' },
+      }),
+    );
+    expect(tx.userRole.create).not.toHaveBeenCalled();
   });
 
 
