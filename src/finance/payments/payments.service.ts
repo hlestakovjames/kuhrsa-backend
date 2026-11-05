@@ -272,39 +272,54 @@ export class PaymentsService {
     organizationId: string,
     id: string,
   ) {
-    const payment = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payment"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      payment.status === PaymentStatus.CANCELLED
-    ) {
-      return payment;
-    }
+      const payment = await tx.payment.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+        include: {
+          allocations: true,
+        },
+      });
 
-    if (
-      payment.status === PaymentStatus.REFUNDED
-    ) {
-      throw new BadRequestException(
-        'A refunded payment cannot be cancelled.',
-      );
-    }
+      if (!payment) {
+        throw new NotFoundException('Payment not found.');
+      }
 
-    if (payment.allocations.length > 0) {
-      throw new BadRequestException(
-        'A payment with allocations cannot be cancelled. Reverse the allocation through the appropriate financial workflow.',
-      );
-    }
+      if (payment.status === PaymentStatus.CANCELLED) {
+        return payment;
+      }
 
-    return this.prisma.payment.update({
-      where: {
-        id: payment.id,
-      },
-      data: {
-        status: PaymentStatus.CANCELLED,
-        paidAt: null,
-      },
+      if (payment.status === PaymentStatus.REFUNDED) {
+        throw new BadRequestException(
+          'A refunded payment cannot be cancelled.',
+        );
+      }
+
+      if (payment.allocations.length > 0) {
+        throw new BadRequestException(
+          'A payment with allocations cannot be cancelled. Reverse the allocation through the appropriate financial workflow.',
+        );
+      }
+
+      return tx.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          status: PaymentStatus.CANCELLED,
+          paidAt: null,
+        },
+      });
     });
   }
 
@@ -312,42 +327,55 @@ export class PaymentsService {
     organizationId: string,
     id: string,
   ) {
-    const payment = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payment"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      payment.status === PaymentStatus.COMPLETED
-    ) {
-      return payment;
-    }
+      const payment = await tx.payment.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+      });
 
-    if (payment.method === PaymentMethod.MPESA) {
-      throw new BadRequestException(
-        'M-Pesa payments can only be completed through a verified provider callback.',
-      );
-    }
+      if (!payment) {
+        throw new NotFoundException('Payment not found.');
+      }
 
-    if (
-      payment.status === PaymentStatus.CANCELLED ||
-      payment.status === PaymentStatus.FAILED ||
-      payment.status === PaymentStatus.REFUNDED ||
-      payment.status === PaymentStatus.PARTIALLY_REFUNDED
-    ) {
-      throw new BadRequestException(
-        'This payment cannot be marked as completed from its current status.',
-      );
-    }
+      if (payment.status === PaymentStatus.COMPLETED) {
+        return payment;
+      }
 
-    return this.prisma.payment.update({
-      where: {
-        id: payment.id,
-      },
-      data: {
-        status: PaymentStatus.COMPLETED,
-        paidAt: new Date(),
-      },
+      if (payment.method === PaymentMethod.MPESA) {
+        throw new BadRequestException(
+          'M-Pesa payments can only be completed through a verified provider callback.',
+        );
+      }
+
+      if (
+        payment.status === PaymentStatus.CANCELLED ||
+        payment.status === PaymentStatus.FAILED ||
+        payment.status === PaymentStatus.REFUNDED ||
+        payment.status === PaymentStatus.PARTIALLY_REFUNDED
+      ) {
+        throw new BadRequestException(
+          'This payment cannot be marked as completed from its current status.',
+        );
+      }
+
+      return tx.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          status: PaymentStatus.COMPLETED,
+          paidAt: new Date(),
+        },
+      });
     });
   }
-}
