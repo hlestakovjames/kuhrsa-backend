@@ -247,7 +247,6 @@ export class RolesService {
 
       return role;
     });
-
     return this.findOne(updatedRole.id, organizationId);
   }
 
@@ -360,9 +359,12 @@ export class RolesService {
       throw new NotFoundException('User not found.');
     }
 
-    if (user.isSystemOwner) {
+    if (
+      user.isSystemOwner ||
+      role.code === GOVERNANCE_ROLE_CODES.SYSTEM_OWNER
+    ) {
       throw new ForbiddenException(
-        'The System Owner role assignments cannot be changed through ordinary role management.',
+        'System Owner identity and assignments cannot be changed through ordinary role management.',
       );
     }
 
@@ -372,38 +374,48 @@ export class RolesService {
       );
     }
 
-    const assignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId,
-          roleId,
-        },
-      },
-    });
-
-    if (!assignment) {
-      throw new NotFoundException(
-        'This user does not have the specified role.',
-      );
-    }
-
-    if (assignment.revokedAt) {
-      throw new ConflictException(
-        'This role assignment has already been revoked.',
-      );
-    }
-
     const revokedAt = new Date();
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.userRole.update({
+      const assignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId,
+            roleId,
+          },
+        },
+      });
+
+      if (!assignment) {
+        throw new NotFoundException(
+          'This user does not have the specified role.',
+        );
+      }
+
+      if (assignment.revokedAt) {
+        throw new ConflictException(
+          'This role assignment has already been revoked.',
+        );
+      }
+
+      // The conditional update prevents duplicate revocation and avoids
+      // revoking a term that was reappointed after it was read.
+      const updateResult = await tx.userRole.updateMany({
         where: {
           id: assignment.id,
+          revokedAt: null,
+          assignedAt: assignment.assignedAt,
         },
         data: {
           revokedAt,
         },
       });
+
+      if (updateResult.count !== 1) {
+        throw new ConflictException(
+          'This role assignment changed before it could be revoked. Refresh and try again.',
+        );
+      }
 
       await tx.auditLog.create({
         data: {
@@ -498,7 +510,6 @@ export class RolesService {
           `The organization can have a maximum of ${ROLE_LIMITS.SUPER_ADMINISTRATOR} Super Administrator appointments.`,
         );
       }
-
       await this.upsertAppointmentInTransaction(
         tx,
         existingAssignment,
@@ -747,8 +758,7 @@ export class RolesService {
 
     await tx.auditLog.create({
       data: {
-        organizationId,
-        actorUserId,
+        organizationId,        actorUserId,
         action: 'ROLE_CHANGE',
         entityType: 'UserRole',
         entityId: assignment.id,
