@@ -393,7 +393,7 @@ export class UsersService {
       await tx.userRole.create({
         data: {
           userId: createdUser.id,
-          roleId: roleToAssign.id,
+          roleId: memberRole.id,
           assignedBy: actorUserId,
         },
       });
