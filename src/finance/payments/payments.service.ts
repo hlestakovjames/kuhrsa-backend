@@ -147,27 +147,37 @@ export class PaymentsService {
       }
     }
 
-    return this.prisma.payment.create({
-      data: {
-        organizationId,
-        memberId: dto.memberId,
-        amount: dto.amount,
-        currency:
-          dto.currency?.trim().toUpperCase() ||
-          'KES',
-        method: dto.method,
-        status: PaymentStatus.PENDING,
-        reference: reference ?? null,
-        externalReference:
-          externalReference ?? null,
-        description:
-          dto.description?.trim() || null,
-        paidAt: null,
-      },
-      include: {
-        member: true,
-      },
-    });
+    try {
+      return await this.prisma.payment.create({
+        data: {
+          organizationId,
+          memberId: dto.memberId,
+          amount: dto.amount,
+          currency:
+            dto.currency?.trim().toUpperCase() ||
+            'KES',
+          method: dto.method,
+          status: PaymentStatus.PENDING,
+          reference: reference ?? null,
+          externalReference:
+            externalReference ?? null,
+          description:
+            dto.description?.trim() || null,
+          paidAt: null,
+        },
+        include: {
+          member: true,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(
+          'A payment with this reference or external reference already exists.',
+        );
+      }
+
+      throw error;
+    }
   }
 
   async update(
@@ -243,29 +253,48 @@ export class PaymentsService {
       }
     }
 
-    return this.prisma.payment.update({
-      where: {
-        id: payment.id,
-      },
-      data: {
-        ...(dto.reference !== undefined && {
-          reference,
-        }),
-        ...(dto.externalReference !== undefined && {
-          externalReference,
-        }),
-        ...(dto.description !== undefined && {
-          description:
-            dto.description.trim() || null,
-        }),
-      },
-      include: {
-        member: true,
-        allocations: true,
-        receipt: true,
-        mpesaTransaction: true,
-      },
-    });
+    try {
+      return await this.prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          ...(dto.reference !== undefined && {
+            reference,
+          }),
+          ...(dto.externalReference !== undefined && {
+            externalReference,
+          }),
+          ...(dto.description !== undefined && {
+            description:
+              dto.description.trim() || null,
+          }),
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(
+          'A payment with this reference or external reference already exists.',
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  private isUniqueConstraintError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
+    );
   }
 
   async cancel(
