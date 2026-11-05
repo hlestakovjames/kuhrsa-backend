@@ -744,3 +744,115 @@ export class RolesService {
 
     await tx.auditLog.create({
       data: {
+        organizationId,
+        actorUserId,
+        action: 'ROLE_CHANGE',
+        entityType: 'UserRole',
+        entityId: assignment.id,
+        oldValue: existingAssignment
+          ? {
+              userId,
+              roleId,
+              startsAt: existingAssignment.startsAt,
+              endsAt: existingAssignment.endsAt,
+              revokedAt: existingAssignment.revokedAt,
+              action: 'REAPPOINT',
+            }
+          : undefined,
+        newValue: {
+          userId,
+          roleId,
+          startsAt,
+          endsAt,
+          revokedAt: null,
+          action: existingAssignment ? 'REAPPOINT' : 'ASSIGN',
+        },
+      },
+    });
+  }
+
+  private async lockOrganizationRoleAssignments(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ) {
+    // Serialize capped-role checks per organization on PostgreSQL.
+    await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "Organization"
+      WHERE "id" = ${organizationId}
+      FOR UPDATE
+    `;
+  }
+
+  private activeAssignmentWhere(now: Date): Prisma.UserRoleWhereInput {
+    return {
+      revokedAt: null,
+      startsAt: {
+        lte: now,
+      },
+      OR: [
+        {
+          endsAt: {
+            gt: now,
+          },
+        },
+        {
+          endsAt: null,
+        },
+      ],
+    };
+  }
+
+  private hasOverlappingAppointment(
+    assignment: UserRole | null,
+    startsAt: Date,
+    endsAt: Date | null,
+  ) {
+    if (!assignment || assignment.revokedAt) {
+      return false;
+    }
+
+    const startsBeforeRequestedEnd =
+      endsAt === null || assignment.startsAt < endsAt;
+    const endsAfterRequestedStart =
+      assignment.endsAt === null || assignment.endsAt > startsAt;
+
+    return startsBeforeRequestedEnd && endsAfterRequestedStart;
+  }
+
+  private isAssignmentActive(assignment: UserRole, now: Date) {
+    if (assignment.revokedAt) {
+      return false;
+    }
+
+    if (assignment.startsAt > now) {
+      return false;
+    }
+
+    if (assignment.endsAt && assignment.endsAt <= now) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private parseDate(value: string, fieldName: string) {
+    const parsed = new Date(value);
+
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ConflictException(`${fieldName} must be a valid ISO date.`);
+    }
+
+    return parsed;
+  }
+
+  private validateAppointmentWindow(startsAt: Date, endsAt: Date, now: Date) {
+    if (endsAt <= startsAt) {
+      throw new ConflictException('endsAt must be later than startsAt.');
+    }
+
+    if (startsAt < now) {
+      throw new ConflictException('startsAt cannot be in the past.');
+    }
+  }
+}
