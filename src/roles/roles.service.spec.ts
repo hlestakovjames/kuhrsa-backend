@@ -154,13 +154,51 @@ describe('RolesService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('rejects creation of the reserved SYSTEM_OWNER role code', async () => {
+  it.each([
+    'SYSTEM_OWNER',
+    'SUPER_ADMINISTRATOR',
+    'ADMINISTRATOR',
+    'EXECUTIVE',
+    'MEMBER',
+  ])('rejects creation of the reserved %s role code', async (code) => {
     await expect(
       service.create(organizationId, actorUserId, {
-        name: 'Protected Identity',
-        code: 'system_owner',
-        description: 'Reserved identity code.',
+        name: 'Reserved Role',
+        code: code.toLowerCase(),
+        description: 'Reserved built-in role code.',
       }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'SUPER_ADMINISTRATOR',
+    'ADMINISTRATOR',
+    'EXECUTIVE',
+    'MEMBER',
+  ])('rejects assigning a custom role using reserved code %s', async (code) => {
+    role.code = code;
+    role.isSystemRole = false;
+
+    await expect(
+      service.assignUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'SUPER_ADMINISTRATOR',
+    'ADMINISTRATOR',
+    'EXECUTIVE',
+    'MEMBER',
+  ])('rejects revoking a custom role using reserved code %s', async (code) => {
+    role.code = code;
+    role.isSystemRole = false;
+
+    await expect(
+      service.removeUser(roleId, userId, organizationId, actorUserId),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
