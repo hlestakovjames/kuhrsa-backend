@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { FinancialPeriodStatus } from '../../../generated/prisma/client';
+import { FinancialPeriodStatus, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateFinancialPeriodDto } from './dto/create-financial-period.dto';
 import { UpdateFinancialPeriodDto } from './dto/update-financial-period.dto';
@@ -34,7 +34,7 @@ export class FinancialPeriodsService {
   }
 
   private async lockOrganization(
-    tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0],
+    tx: Prisma.TransactionClient,
     organizationId: string,
   ) {
     await tx.$queryRaw<Array<{ id: string }>>`
