@@ -37,7 +37,7 @@ describe('MpesaService callback processing', () => {
 
   const callback = (
     resultCode = 0,
-    amount: number | undefined = 150,
+    amount: number | null = 150,
     phoneNumber: number | undefined = 254712345678,
     merchantRequestId = 'merchant-1',
     receiptNumber = 'QAB123XYZ',
@@ -50,7 +50,7 @@ describe('MpesaService callback processing', () => {
         ResultDesc: resultCode === 0 ? 'Success' : 'Cancelled by user',
         CallbackMetadata: {
           Item: [
-            ...(amount === undefined ? [] : [{ Name: 'Amount', Value: amount }]),
+            ...(amount === null ? [] : [{ Name: 'Amount', Value: amount }]),
             ...(receiptNumber ? [{ Name: 'MpesaReceiptNumber', Value: receiptNumber }] : []),
             ...(phoneNumber === undefined ? [] : [{ Name: 'PhoneNumber', Value: phoneNumber }]),
             { Name: 'TransactionDate', Value: 20261105163000 },
@@ -154,7 +154,7 @@ describe('MpesaService callback processing', () => {
   });
 
   it('keeps a successful callback pending when the amount is missing', async () => {
-    await service.handleCallback(callback(0, undefined) as never);
+    await service.handleCallback(callback(0, null) as never);
 
     expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
