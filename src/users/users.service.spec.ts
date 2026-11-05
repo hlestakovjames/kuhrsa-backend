@@ -183,6 +183,52 @@ describe('UsersService', () => {
     ]);
   });
 
+  it('excludes malformed custom roles that reuse reserved built-in codes', () => {
+    const user = {
+      id: 'user-id',
+      userRoles: [
+        {
+          id: 'custom-admin-assignment',
+          role: {
+            id: 'custom-admin-role',
+            code: 'ADMINISTRATOR',
+            isSystemRole: false,
+            rolePermissions: [
+              { permission: { code: 'users.roles.assign' } },
+            ],
+          },
+        },
+        {
+          id: 'seeded-admin-assignment',
+          role: {
+            id: 'seeded-admin-role',
+            code: 'ADMINISTRATOR',
+            isSystemRole: true,
+            rolePermissions: [
+              { permission: { code: 'users.roles.assign' } },
+            ],
+          },
+        },
+        {
+          id: 'custom-member-assignment',
+          role: {
+            id: 'custom-member-role',
+            code: 'MEMBER',
+            isSystemRole: false,
+            rolePermissions: [],
+          },
+        },
+      ],
+      member: { positionAssignments: [] },
+    };
+
+    const result = (service as any).withEffectiveRoles(user);
+
+    expect(result.userRoles).toHaveLength(1);
+    expect(result.userRoles[0].id).toBe('seeded-admin-assignment');
+    expect(result.userRoles[0].role.isSystemRole).toBe(true);
+  });
+
   it('always assigns the baseline MEMBER role during user creation', async () => {
     const result = await service.create(
       'organization-id',
