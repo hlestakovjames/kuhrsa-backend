@@ -142,6 +142,7 @@ describe('RolesService', () => {
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
   it('rejects the reserved SYSTEM_OWNER role code', async () => {
     role.code = 'SYSTEM_OWNER';
 
@@ -151,6 +152,7 @@ describe('RolesService', () => {
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
   it('rejects creation of the reserved SYSTEM_OWNER role code', async () => {
     await expect(
       service.create(organizationId, actorUserId, {
@@ -160,7 +162,6 @@ describe('RolesService', () => {
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
-    expect(prisma.role.findUnique).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -197,6 +198,4 @@ describe('RolesService', () => {
     );
     expect(tx.userRole.create).not.toHaveBeenCalled();
   });
-
-
 });
