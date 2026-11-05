@@ -33,6 +33,7 @@ export class FeeSchedulesController {
   ) {
     return this.feeSchedulesService.findAll(
       req.user.organizationId,
+      feeDefinitionId,
     );
   }
 
