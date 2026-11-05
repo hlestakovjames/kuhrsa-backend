@@ -127,45 +127,6 @@ export class MemberChargesService {
       );
     }
 
-    const member =
-      await this.prisma.member.findFirst({
-        where: {
-          id: dto.memberId,
-          organizationId,
-        },
-      });
-
-    if (!member) {
-      throw new NotFoundException(
-        'Member not found.',
-      );
-    }
-
-    const feeSchedule =
-      await this.prisma.feeSchedule.findFirst({
-        where: {
-          id: dto.feeScheduleId,
-          organizationId,
-        },
-      });
-
-    if (!feeSchedule) {
-      throw new NotFoundException(
-        'Fee schedule not found.',
-      );
-    }
-
-    if (
-      feeSchedule.status ===
-        FeeScheduleStatus.CANCELLED ||
-      feeSchedule.status ===
-        FeeScheduleStatus.EXPIRED
-    ) {
-      throw new BadRequestException(
-        'Cancelled or expired fee schedules cannot create member charges.',
-      );
-    }
-
     const dueDate = dto.dueDate
       ? new Date(dto.dueDate)
       : undefined;
@@ -179,8 +140,53 @@ export class MemberChargesService {
       );
     }
 
-    const existing =
-      await this.prisma.memberCharge.findFirst({
+    return this.prisma.$transaction(async (tx) => {
+      /*
+       * M-Pesa callbacks take the same member lock before reading
+       * outstanding charges. This serializes charge creation with
+       * automatic payment allocation and with other charge creation
+       * for the same member.
+       */
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Member"
+        WHERE "id" = ${dto.memberId}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
+
+      const member = await tx.member.findFirst({
+        where: {
+          id: dto.memberId,
+          organizationId,
+        },
+      });
+
+      if (!member) {
+        throw new NotFoundException('Member not found.');
+      }
+
+      const feeSchedule = await tx.feeSchedule.findFirst({
+        where: {
+          id: dto.feeScheduleId,
+          organizationId,
+        },
+      });
+
+      if (!feeSchedule) {
+        throw new NotFoundException('Fee schedule not found.');
+      }
+
+      if (
+        feeSchedule.status === FeeScheduleStatus.CANCELLED ||
+        feeSchedule.status === FeeScheduleStatus.EXPIRED
+      ) {
+        throw new BadRequestException(
+          'Cancelled or expired fee schedules cannot create member charges.',
+        );
+      }
+
+      const existing = await tx.memberCharge.findFirst({
         where: {
           organizationId,
           memberId: dto.memberId,
@@ -196,39 +202,36 @@ export class MemberChargesService {
         },
       });
 
-    if (existing) {
-      throw new ConflictException(
-        'A matching member charge already exists.',
-      );
-    }
+      if (existing) {
+        throw new ConflictException(
+          'A matching member charge already exists.',
+        );
+      }
 
-    return this.prisma.memberCharge.create({
-      data: {
-        organizationId,
-        memberId: dto.memberId,
-        feeScheduleId: dto.feeScheduleId,
-        description:
-          dto.description?.trim() || null,
-        amountDue: dto.amountDue,
-        amountPaid: 0,
-        balance: dto.amountDue,
-        currency:
-          dto.currency?.trim().toUpperCase() ||
-          feeSchedule.currency ||
-          'KES',
-        status: this.getChargeStatus(
-          dto.amountDue,
-          0,
-        ),
-        dueDate: dueDate ?? null,
-      },
-      include: {
-        feeSchedule: {
-          include: {
-            feeDefinition: true,
+      return tx.memberCharge.create({
+        data: {
+          organizationId,
+          memberId: dto.memberId,
+          feeScheduleId: dto.feeScheduleId,
+          description: dto.description?.trim() || null,
+          amountDue: dto.amountDue,
+          amountPaid: 0,
+          balance: dto.amountDue,
+          currency:
+            dto.currency?.trim().toUpperCase() ||
+            feeSchedule.currency ||
+            'KES',
+          status: this.getChargeStatus(dto.amountDue, 0),
+          dueDate: dueDate ?? null,
+        },
+        include: {
+          feeSchedule: {
+            include: {
+              feeDefinition: true,
+            },
           },
         },
-      },
+      });
     });
   }
 
