@@ -811,8 +811,8 @@ model Payment {
   @@index([memberId])
   @@index([method])
   @@index([status])
-  @@index([reference])
-  @@index([externalReference])
+  @@unique([organizationId, reference])
+  @@unique([organizationId, externalReference])
   @@index([paidAt])
 }
 
