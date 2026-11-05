@@ -632,13 +632,46 @@ export class UsersService {
 
     const effectiveRoles = [...directRoles];
 
+    const protectedGovernanceRoleCodes = new Set([
+      'SYSTEM_OWNER',
+      'SUPER_ADMINISTRATOR',
+      'ADMINISTRATOR',
+    ]);
+    const protectedGovernancePermissionCodes = new Set([
+      'governance.assignments.create',
+      'governance.assignments.update',
+      'governance.assignments.activate',
+      'governance.assignments.end',
+      'governance.assignments.revoke',
+      'governance.positions.manage',
+      'governance.terms.manage',
+    ]);
+
     for (const assignment of positionAssignments) {
       for (const assignmentRole of assignment.roles ?? []) {
         const role = assignmentRole.role;
 
-        if (!role) {
+        if (!role || protectedGovernanceRoleCodes.has(role.code)) {
           continue;
         }
+
+        // Governance-derived roles must never confer administrative or
+        // access-management privileges, even if a custom role is edited
+        // after the position assignment was created.
+        const safeRole = {
+          ...role,
+          rolePermissions: (role.rolePermissions ?? []).filter(
+            (rolePermission: any) => {
+              const code = rolePermission.permission?.code;
+              return (
+                typeof code === 'string' &&
+                !code.startsWith('users.') &&
+                !code.startsWith('system.') &&
+                !protectedGovernancePermissionCodes.has(code)
+              );
+            },
+          ),
+        };
 
         const alreadyIncluded = effectiveRoles.some(
           (userRole: any) => userRole.role?.id === role.id,
@@ -654,7 +687,7 @@ export class UsersService {
             startsAt: assignment.startsAt,
             endsAt: assignment.endsAt,
             revokedAt: null,
-            role,
+            role: safeRole,
           });
         }
       }
