@@ -35,18 +35,24 @@ describe('MpesaService callback processing', () => {
     },
   };
 
-  const callback = (resultCode = 0, amount = 150) => ({
+  const callback = (
+    resultCode = 0,
+    amount: number | undefined = 150,
+    phoneNumber: number | undefined = 254712345678,
+    merchantRequestId = 'merchant-1',
+    receiptNumber = 'QAB123XYZ',
+  ) => ({
     Body: {
       stkCallback: {
-        MerchantRequestID: 'merchant-1',
+        MerchantRequestID: merchantRequestId,
         CheckoutRequestID: 'ws_CO_123',
         ResultCode: resultCode,
         ResultDesc: resultCode === 0 ? 'Success' : 'Cancelled by user',
         CallbackMetadata: {
           Item: [
-            { Name: 'Amount', Value: amount },
-            { Name: 'MpesaReceiptNumber', Value: 'QAB123XYZ' },
-            { Name: 'PhoneNumber', Value: 254712345678 },
+            ...(amount === undefined ? [] : [{ Name: 'Amount', Value: amount }]),
+            ...(receiptNumber ? [{ Name: 'MpesaReceiptNumber', Value: receiptNumber }] : []),
+            ...(phoneNumber === undefined ? [] : [{ Name: 'PhoneNumber', Value: phoneNumber }]),
             { Name: 'TransactionDate', Value: 20261105163000 },
           ],
         },
@@ -143,6 +149,37 @@ describe('MpesaService callback processing', () => {
         data: expect.objectContaining({ status: 'FAILED' }),
       }),
     );
+    expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
+    expect(tx.receipt.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps a successful callback pending when the amount is missing', async () => {
+    await service.handleCallback(callback(0, undefined) as never);
+
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
+    expect(tx.receipt.create).not.toHaveBeenCalled();
+    expect(tx.mpesaTransaction.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          resultDescription: expect.stringContaining('requires reconciliation'),
+        }),
+      }),
+    );
+  });
+
+  it('does not complete a successful callback when the payer phone differs', async () => {
+    await service.handleCallback(callback(0, 150, 254701234567) as never);
+
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
+    expect(tx.receipt.create).not.toHaveBeenCalled();
+  });
+
+  it('does not complete a successful callback with a different merchant request ID', async () => {
+    await service.handleCallback(callback(0, 150, 254712345678, 'other-merchant') as never);
+
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
     expect(tx.receipt.create).not.toHaveBeenCalled();
   });
