@@ -134,6 +134,55 @@ describe('UsersService', () => {
     ]);
   });
 
+  it('filters protected permissions from directly assigned custom roles but preserves system roles', () => {
+    const user = {
+      id: 'user-id',
+      userRoles: [
+        {
+          id: 'custom-assignment-id',
+          role: {
+            id: 'custom-role-id',
+            code: 'CUSTOM_FINANCE',
+            isSystemRole: false,
+            rolePermissions: [
+              { permission: { code: 'finance.payments.view' } },
+              { permission: { code: 'users.roles.assign' } },
+              { permission: { code: 'system.settings.manage' } },
+              { permission: { code: 'governance.assignments.revoke' } },
+            ],
+          },
+        },
+        {
+          id: 'system-assignment-id',
+          role: {
+            id: 'administrator-role-id',
+            code: 'ADMINISTRATOR',
+            isSystemRole: true,
+            rolePermissions: [
+              { permission: { code: 'users.roles.assign' } },
+              { permission: { code: 'system.settings.manage' } },
+            ],
+          },
+        },
+      ],
+      member: {
+        positionAssignments: [],
+      },
+    };
+
+    const result = (service as any).withEffectiveRoles(user);
+
+    expect(result.userRoles[0].role.rolePermissions.map(
+      (item: any) => item.permission.code,
+    )).toEqual(['finance.payments.view']);
+    expect(result.userRoles[1].role.rolePermissions.map(
+      (item: any) => item.permission.code,
+    )).toEqual([
+      'users.roles.assign',
+      'system.settings.manage',
+    ]);
+  });
+
   it('always assigns the baseline MEMBER role during user creation', async () => {
     const result = await service.create(
       'organization-id',
