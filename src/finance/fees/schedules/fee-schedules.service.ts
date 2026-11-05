@@ -40,12 +40,14 @@ export class FeeSchedulesService {
 
   async findOne(
     organizationId: string,
+    feeDefinitionId: string,
     id: string,
   ) {
     const schedule = await this.prisma.feeSchedule.findFirst({
       where: {
         id,
         organizationId,
+        feeDefinitionId,
       },
       include: {
         feeDefinition: true,
@@ -208,11 +210,13 @@ export class FeeSchedulesService {
 
   async update(
     organizationId: string,
+    feeDefinitionId: string,
     id: string,
     dto: UpdateFeeScheduleDto,
   ) {
     const schedule = await this.findOne(
       organizationId,
+      feeDefinitionId,
       id,
     );
 
