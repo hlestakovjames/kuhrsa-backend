@@ -45,6 +45,7 @@ describe('RolesService', () => {
           roleId,
         }),
         update: jest.fn().mockResolvedValue({ id: 'user-role-id', userId, roleId }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-id' }),
@@ -163,6 +164,83 @@ describe('RolesService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not allow revoking the reserved SYSTEM_OWNER role code', async () => {
+    role.code = 'SYSTEM_OWNER';
+
+    await expect(
+      service.removeUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not allow ordinary role management to revoke the System Owner assignment', async () => {
+    user.isSystemOwner = true;
+
+    await expect(
+      service.removeUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('revokes an assignment conditionally and audits the change in the same transaction', async () => {
+    const assignedAt = new Date('2026-10-01T00:00:00.000Z');
+    const startsAt = new Date('2026-10-01T00:00:00.000Z');
+    const endsAt = new Date('2026-12-01T00:00:00.000Z');
+    tx.userRole.findUnique.mockResolvedValue({
+      id: 'user-role-id',
+      userId,
+      roleId,
+      assignedAt,
+      startsAt,
+      endsAt,
+      revokedAt: null,
+    });
+
+    await expect(
+      service.removeUser(roleId, userId, organizationId, actorUserId),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        message: 'Role revoked successfully.',
+        userId,
+        roleId,
+        roleCode: role.code,
+        revokedAt: expect.any(Date),
+      }),
+    );
+
+    expect(tx.userRole.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'user-role-id',
+        revokedAt: null,
+        assignedAt,
+      },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not write an audit record when an assignment changes before revocation', async () => {
+    const assignedAt = new Date('2026-10-01T00:00:00.000Z');
+    tx.userRole.findUnique.mockResolvedValue({
+      id: 'user-role-id',
+      userId,
+      roleId,
+      assignedAt,
+      startsAt: assignedAt,
+      endsAt: null,
+      revokedAt: null,
+    });
+    tx.userRole.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.removeUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it('allows reappointment when the previous Administrator term does not overlap', async () => {
