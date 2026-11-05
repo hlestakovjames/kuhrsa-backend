@@ -22,7 +22,7 @@ export class PaymentProvidersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAllProviders(organizationId: string) {
-    return this.prisma.paymentProvider.findMany({
+    const providers = await this.prisma.paymentProvider.findMany({
       where: {
         organizationId,
       },
@@ -38,6 +38,13 @@ export class PaymentProvidersService {
         configurations: true,
       },
     });
+
+    return providers.map((provider) => ({
+      ...provider,
+      configurations: provider.configurations.map((configuration) =>
+        this.sanitizeConfiguration(configuration),
+      ),
+    }));
   }
 
   async findProvider(
@@ -61,7 +68,12 @@ export class PaymentProvidersService {
       );
     }
 
-    return provider;
+    return {
+      ...provider,
+      configurations: provider.configurations.map((configuration) =>
+        this.sanitizeConfiguration(configuration),
+      ),
+    };
   }
 
   async createProvider(
@@ -117,7 +129,7 @@ export class PaymentProvidersService {
         });
       }
 
-      return tx.paymentProvider.create({
+      const provider = await tx.paymentProvider.create({
         data: {
           organizationId,
           name,
@@ -130,6 +142,13 @@ export class PaymentProvidersService {
           configurations: true,
         },
       });
+
+      return {
+        ...provider,
+        configurations: provider.configurations.map((configuration) =>
+          this.sanitizeConfiguration(configuration),
+        ),
+      };
     });
   }
 
@@ -187,7 +206,7 @@ export class PaymentProvidersService {
         });
       }
 
-      return tx.paymentProvider.update({
+      const updated = await tx.paymentProvider.update({
         where: {
           id: provider.id,
         },
@@ -204,6 +223,13 @@ export class PaymentProvidersService {
           configurations: true,
         },
       });
+
+      return {
+        ...updated,
+        configurations: updated.configurations.map((configuration) =>
+          this.sanitizeConfiguration(configuration),
+        ),
+      };
     });
   }
 
@@ -225,9 +251,7 @@ export class PaymentProvidersService {
       );
     }
 
-    return this.sanitizeConfiguration(
-      configuration,
-    );
+    return configuration;
   }
 
   async createConfiguration(
@@ -421,7 +445,7 @@ export class PaymentProvidersService {
     minimumAmount: unknown;
     maximumAmount: unknown;
     callbackUrl: string | null;
-    settings: unknown;
+    settings?: unknown;
     createdAt: Date;
     updatedAt: Date;
   }>(configuration: T) {
@@ -445,7 +469,6 @@ export class PaymentProvidersService {
           ? Number(configuration.maximumAmount)
           : null,
       callbackUrl: configuration.callbackUrl,
-      settings: configuration.settings,
       createdAt: configuration.createdAt,
       updatedAt: configuration.updatedAt,
     };
