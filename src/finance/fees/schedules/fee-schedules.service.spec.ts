@@ -7,9 +7,11 @@ import { FeeSchedulesService } from './fee-schedules.service';
 describe('FeeSchedulesService', () => {
   let service: FeeSchedulesService;
   let feeScheduleFindMany: jest.Mock;
+  let feeScheduleFindFirst: jest.Mock;
 
   beforeEach(async () => {
     feeScheduleFindMany = jest.fn().mockResolvedValue([]);
+    feeScheduleFindFirst = jest.fn();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -19,6 +21,7 @@ describe('FeeSchedulesService', () => {
           useValue: {
             feeSchedule: {
               findMany: feeScheduleFindMany,
+              findFirst: feeScheduleFindFirst,
             },
           },
         },
@@ -42,6 +45,49 @@ describe('FeeSchedulesService', () => {
       },
       orderBy: {
         effectiveFrom: 'desc',
+      },
+      include: {
+        feeDefinition: true,
+      },
+    });
+  });
+
+  it('finds a schedule only within the requested fee definition and organization', async () => {
+    const schedule = {
+      id: 'schedule-1',
+      organizationId: 'org-1',
+      feeDefinitionId: 'fee-definition-1',
+    };
+    feeScheduleFindFirst.mockResolvedValue(schedule);
+
+    await expect(
+      service.findOne('org-1', 'fee-definition-1', 'schedule-1'),
+    ).resolves.toBe(schedule);
+
+    expect(feeScheduleFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'schedule-1',
+        organizationId: 'org-1',
+        feeDefinitionId: 'fee-definition-1',
+      },
+      include: {
+        feeDefinition: true,
+      },
+    });
+  });
+
+  it('does not find a schedule through a different fee definition URL', async () => {
+    feeScheduleFindFirst.mockResolvedValue(null);
+
+    await expect(
+      service.findOne('org-1', 'fee-definition-2', 'schedule-1'),
+    ).rejects.toThrow('Fee schedule not found.');
+
+    expect(feeScheduleFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'schedule-1',
+        organizationId: 'org-1',
+        feeDefinitionId: 'fee-definition-2',
       },
       include: {
         feeDefinition: true,
