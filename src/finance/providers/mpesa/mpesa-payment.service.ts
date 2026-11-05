@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,7 @@ import {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { MpesaService } from './mpesa.service';
 import { InitiateStkDto } from './dto/initiate-stk.dto';
+import { InitiateMemberStkDto } from './dto/initiate-member-stk.dto';
 
 @Injectable()
 export class MpesaPaymentService {
@@ -16,6 +18,57 @@ export class MpesaPaymentService {
     private readonly prisma: PrismaService,
     private readonly mpesaService: MpesaService,
   ) {}
+
+  async initiateMemberStk(
+    organizationId: string,
+    userId: string,
+    dto: InitiateMemberStkDto,
+  ) {
+    const member = await this.prisma.member.findFirst({
+      where: { organizationId, userId },
+      select: { id: true, memberNumber: true },
+    });
+
+    if (!member) {
+      throw new NotFoundException(
+        'No member record is linked to this account.',
+      );
+    }
+
+    const outstandingCharges = await this.prisma.memberCharge.findMany({
+      where: {
+        organizationId,
+        memberId: member.id,
+        status: { notIn: ['WAIVED', 'CANCELLED'] },
+      },
+      select: { balance: true },
+    });
+
+    const outstandingBalance = outstandingCharges.reduce(
+      (total, charge) => total + Number(charge.balance),
+      0,
+    );
+
+    if (outstandingBalance <= 0) {
+      throw new BadRequestException(
+        'There is no outstanding membership balance to pay.',
+      );
+    }
+
+    if (dto.amount > outstandingBalance) {
+      throw new BadRequestException(
+        `Payment amount cannot exceed your outstanding balance of ${outstandingBalance.toFixed(2)} KES.`,
+      );
+    }
+
+    return this.initiateStk(organizationId, {
+      memberId: member.id,
+      amount: dto.amount,
+      phoneNumber: dto.phoneNumber,
+      accountReference: member.memberNumber,
+      transactionDescription: 'KUHRSA membership payment',
+    });
+  }
 
   async initiateStk(
     organizationId: string,
