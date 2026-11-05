@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MembersService } from './members.service';
 import { MemberNumberService } from './member-number.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('MembersService', () => {
@@ -17,6 +18,12 @@ describe('MembersService', () => {
         {
           provide: MemberNumberService,
           useValue: {},
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            sendMemberWelcome: jest.fn(),
+          },
         },
       ],
     }).compile();
