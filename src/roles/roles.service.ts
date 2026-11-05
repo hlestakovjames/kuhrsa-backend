@@ -137,9 +137,9 @@ export class RolesService {
   ) {
     const code = dto.code.trim().toUpperCase();
 
-    if (code === GOVERNANCE_ROLE_CODES.SYSTEM_OWNER) {
+    if (Object.values(GOVERNANCE_ROLE_CODES).includes(code as any)) {
       throw new ForbiddenException(
-        'System Owner is a protected platform identity, not an assignable organization role.',
+        `${code} is a reserved built-in role code and cannot be created as a custom role.`,
       );
     }
 
@@ -289,6 +289,15 @@ export class RolesService {
       );
     }
 
+    if (
+      Object.values(GOVERNANCE_ROLE_CODES).includes(role.code as any) &&
+      role.isSystemRole !== true
+    ) {
+      throw new ForbiddenException(
+        `${role.code} is reserved for its seeded system role and cannot be assigned from a custom role record.`,
+      );
+    }
+
     if (role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR) {
       return this.assignSuperAdministrator(
         role,
@@ -365,6 +374,15 @@ export class RolesService {
     ) {
       throw new ForbiddenException(
         'System Owner identity and assignments cannot be changed through ordinary role management.',
+      );
+    }
+
+    if (
+      Object.values(GOVERNANCE_ROLE_CODES).includes(role.code as any) &&
+      role.isSystemRole !== true
+    ) {
+      throw new ForbiddenException(
+        `${role.code} is reserved for its seeded system role and cannot be changed through ordinary role management.`,
       );
     }
 
