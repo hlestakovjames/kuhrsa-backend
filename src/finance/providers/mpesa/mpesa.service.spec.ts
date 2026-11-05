@@ -14,6 +14,7 @@ describe('MpesaService callback processing', () => {
     memberCharge: { findMany: jest.Mock; update: jest.Mock };
     paymentAllocation: { create: jest.Mock };
     receipt: { findUnique: jest.Mock; findFirst: jest.Mock; create: jest.Mock };
+    $queryRaw: jest.Mock;
   };
 
   const payment = {
@@ -75,6 +76,7 @@ describe('MpesaService callback processing', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       paymentAllocation: { create: jest.fn().mockResolvedValue({}) },
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'member-1' }]),
       receipt: {
         findUnique: jest.fn().mockResolvedValue(null),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -99,6 +101,8 @@ describe('MpesaService callback processing', () => {
         data: expect.objectContaining({ status: 'COMPLETED' }),
       }),
     );
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.memberCharge.findMany).toHaveBeenCalledTimes(1);
     expect(tx.paymentAllocation.create).toHaveBeenCalledTimes(2);
     expect(tx.paymentAllocation.create).toHaveBeenNthCalledWith(1, {
       data: { paymentId: 'payment-1', chargeId: 'charge-1', amount: new Prisma.Decimal(100) },
@@ -125,6 +129,7 @@ describe('MpesaService callback processing', () => {
 
     await service.handleCallback(callback() as never);
 
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
     expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
     expect(tx.memberCharge.update).not.toHaveBeenCalled();
     expect(tx.receipt.create).not.toHaveBeenCalled();
