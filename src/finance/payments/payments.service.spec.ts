@@ -67,7 +67,7 @@ describe('PaymentsService status lifecycle', () => {
       amount: 250,
       method: PaymentMethod.MANUAL,
       status: PaymentStatus.COMPLETED,
-    } as CreatePaymentDto;
+    } as unknown as CreatePaymentDto;
 
     await service.create('org-1', dto);
 
@@ -87,7 +87,7 @@ describe('PaymentsService status lifecycle', () => {
     const dto = {
       reference: 'manual-reference-1',
       status: PaymentStatus.COMPLETED,
-    } as UpdatePaymentDto;
+    } as unknown as UpdatePaymentDto;
 
     await service.update('org-1', 'payment-1', dto);
 
