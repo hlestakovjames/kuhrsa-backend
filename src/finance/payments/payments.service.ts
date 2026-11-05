@@ -147,14 +147,6 @@ export class PaymentsService {
       }
     }
 
-    const status =
-      dto.status ?? PaymentStatus.COMPLETED;
-
-    const paidAt =
-      status === PaymentStatus.COMPLETED
-        ? new Date()
-        : null;
-
     return this.prisma.payment.create({
       data: {
         organizationId,
@@ -164,13 +156,13 @@ export class PaymentsService {
           dto.currency?.trim().toUpperCase() ||
           'KES',
         method: dto.method,
-        status,
+        status: PaymentStatus.PENDING,
         reference: reference ?? null,
         externalReference:
           externalReference ?? null,
         description:
           dto.description?.trim() || null,
-        paidAt,
+        paidAt: null,
       },
       include: {
         member: true,
@@ -251,34 +243,11 @@ export class PaymentsService {
       }
     }
 
-    const status =
-      dto.status ?? payment.status;
-
-    let paidAt = payment.paidAt;
-
-    if (
-      status === PaymentStatus.COMPLETED &&
-      payment.status !== PaymentStatus.COMPLETED
-    ) {
-      paidAt = new Date();
-    }
-
-    if (
-      status !== PaymentStatus.COMPLETED &&
-      status !== PaymentStatus.PARTIALLY_REFUNDED
-    ) {
-      paidAt = null;
-    }
-
     return this.prisma.payment.update({
       where: {
         id: payment.id,
       },
       data: {
-        ...(dto.status !== undefined && {
-          status,
-          paidAt,
-        }),
         ...(dto.reference !== undefined && {
           reference,
         }),
