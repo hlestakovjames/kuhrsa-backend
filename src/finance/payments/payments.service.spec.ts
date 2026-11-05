@@ -125,6 +125,37 @@ describe('PaymentsService status lifecycle', () => {
     );
   });
 
+  it('maps a database uniqueness race on payment creation to a conflict', async () => {
+    paymentFindFirst.mockResolvedValue(null);
+    paymentCreate.mockRejectedValue({ code: 'P2002' });
+
+    await expect(
+      service.create('org-1', {
+        memberId: 'member-1',
+        amount: 250,
+        method: PaymentMethod.MANUAL,
+        reference: 'manual-reference-1',
+      }),
+    ).rejects.toThrow(
+      'A payment with this reference or external reference already exists.',
+    );
+  });
+
+  it('maps a database uniqueness race on payment update to a conflict', async () => {
+    paymentFindFirst
+      .mockResolvedValueOnce(existingPayment)
+      .mockResolvedValueOnce(null);
+    paymentUpdate.mockRejectedValue({ code: 'P2002' });
+
+    await expect(
+      service.update('org-1', 'payment-1', {
+        externalReference: 'bank-reference-1',
+      }),
+    ).rejects.toThrow(
+      'A payment with this reference or external reference already exists.',
+    );
+  });
+
   it('uses the dedicated completion operation to transition a pending payment', async () => {
     await service.markCompleted('org-1', 'payment-1');
 
