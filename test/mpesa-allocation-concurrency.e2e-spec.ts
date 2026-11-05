@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Pool } from 'pg';
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
@@ -10,19 +11,19 @@ describeWithDatabase('M-Pesa member allocation PostgreSQL lock', () => {
     max: 2,
   });
 
-  const organizationId = crypto.randomUUID();
-  const memberId = crypto.randomUUID();
+  const organizationId = randomUUID();
+  const memberId = randomUUID();
   const organizationCode = `MPESA_LOCK_TEST_${organizationId}`;
   const memberNumber = `MPESA-LOCK-${memberId}`;
 
   beforeAll(async () => {
     await pool.query(
-      'INSERT INTO "Organization" ("id", "name", "code") VALUES ($1, $2, $3)',
+      'INSERT INTO "Organization" ("id", "name", "code", "updatedAt") VALUES ($1, $2, $3, NOW())',
       [organizationId, 'M-Pesa lock integration test', organizationCode],
     );
 
     await pool.query(
-      'INSERT INTO "Member" ("id", "organizationId", "memberNumber") VALUES ($1, $2, $3)',
+      'INSERT INTO "Member" ("id", "organizationId", "memberNumber", "updatedAt") VALUES ($1, $2, $3, NOW())',
       [memberId, organizationId, memberNumber],
     );
   });
