@@ -243,6 +243,64 @@ describe('RolesService', () => {
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it('serializes Executive appointments and reads the existing assignment inside the transaction', async () => {
+    role.code = 'EXECUTIVE';
+    role.name = 'Executive';
+
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 86_400_000).toISOString();
+
+    await expect(
+      service.assignUser(
+        roleId,
+        userId,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: roleId }));
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.userRole.findUnique).toHaveBeenCalledWith({
+      where: { userId_roleId: { userId, roleId } },
+    });
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.userRole.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(tx.userRole.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes general role assignments and checks for overlapping assignments inside the transaction', async () => {
+    role.code = 'REPORT_VIEWER';
+    role.name = 'Report Viewer';
+
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 86_400_000).toISOString();
+
+    await expect(
+      service.assignUser(
+        roleId,
+        userId,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: roleId }));
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.userRole.findUnique).toHaveBeenCalledWith({
+      where: { userId_roleId: { userId, roleId } },
+    });
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.userRole.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(tx.userRole.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
   it('allows reappointment when the previous Administrator term does not overlap', async () => {
     role.code = 'ADMINISTRATOR';
     role.name = 'Administrator';
