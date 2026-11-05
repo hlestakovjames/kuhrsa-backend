@@ -617,35 +617,39 @@ export class RolesService {
     }
 
     const startsAt = this.parseDate(startsAtInput, 'startsAt');
-
     const endsAt = this.parseDate(endsAtInput, 'endsAt');
 
     this.validateAppointmentWindow(startsAt, endsAt, now);
 
-    const existingAssignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId: user.id,
-          roleId: role.id,
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOrganizationRoleAssignments(tx, organizationId);
+
+      const existingAssignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
         },
-      },
-    });
+      });
 
-    if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
-      throw new ConflictException(
-        'This user already has an active Executive appointment.',
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
+        throw new ConflictException(
+          'This user already has an active Executive appointment.',
+        );
+      }
+
+      await this.upsertAppointmentInTransaction(
+        tx,
+        existingAssignment,
+        role.id,
+        user.id,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
       );
-    }
-
-    await this.upsertAppointment(
-      existingAssignment,
-      role.id,
-      user.id,
-      organizationId,
-      actorUserId,
-      startsAt,
-      endsAt,
-    );
+    });
 
     return this.findOne(role.id, organizationId);
   }
@@ -670,53 +674,35 @@ export class RolesService {
       throw new ConflictException('endsAt must be later than startsAt.');
     }
 
-    const existingAssignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId: user.id,
-          roleId: role.id,
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOrganizationRoleAssignments(tx, organizationId);
+
+      const existingAssignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
         },
-      },
-    });
+      });
 
-    if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
-      throw new ConflictException('This user already has this role.');
-    }
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
+        throw new ConflictException('This user already has this role.');
+      }
 
-    await this.upsertAppointment(
-      existingAssignment,
-      role.id,
-      user.id,
-      organizationId,
-      actorUserId,
-      startsAt,
-      endsAt,
-    );
-
-    return this.findOne(role.id, organizationId);
-  }
-
-  private async upsertAppointment(
-    existingAssignment: UserRole | null,
-    roleId: string,
-    userId: string,
-    organizationId: string,
-    actorUserId: string,
-    startsAt: Date,
-    endsAt: Date | null,
-  ) {
-    await this.prisma.$transaction((tx) =>
-      this.upsertAppointmentInTransaction(
+      await this.upsertAppointmentInTransaction(
         tx,
         existingAssignment,
-        roleId,
-        userId,
+        role.id,
+        user.id,
         organizationId,
         actorUserId,
         startsAt,
         endsAt,
-      ),
-    );
+      );
+    });
+
+    return this.findOne(role.id, organizationId);
   }
 
   private async upsertAppointmentInTransaction(
@@ -758,114 +744,3 @@ export class RolesService {
 
     await tx.auditLog.create({
       data: {
-        organizationId,        actorUserId,
-        action: 'ROLE_CHANGE',
-        entityType: 'UserRole',
-        entityId: assignment.id,
-        oldValue: existingAssignment
-          ? {
-              userId,
-              roleId,
-              startsAt: existingAssignment.startsAt,
-              endsAt: existingAssignment.endsAt,
-              revokedAt: existingAssignment.revokedAt,
-              action: 'REAPPOINT',
-            }
-          : undefined,
-        newValue: {
-          userId,
-          roleId,
-          startsAt,
-          endsAt,
-          revokedAt: null,
-          action: existingAssignment ? 'REAPPOINT' : 'ASSIGN',
-        },
-      },
-    });
-  }
-
-  private async lockOrganizationRoleAssignments(
-    tx: Prisma.TransactionClient,
-    organizationId: string,
-  ) {
-    // Serialize capped-role checks per organization on PostgreSQL.
-    await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT "id"
-      FROM "Organization"
-      WHERE "id" = ${organizationId}
-      FOR UPDATE
-    `;
-  }
-
-  private activeAssignmentWhere(now: Date): Prisma.UserRoleWhereInput {
-    return {
-      revokedAt: null,
-      startsAt: {
-        lte: now,
-      },
-      OR: [
-        {
-          endsAt: {
-            gt: now,
-          },
-        },
-        {
-          endsAt: null,
-        },
-      ],
-    };
-  }
-
-  private hasOverlappingAppointment(
-    assignment: UserRole | null,
-    startsAt: Date,
-    endsAt: Date | null,
-  ) {
-    if (!assignment || assignment.revokedAt) {
-      return false;
-    }
-
-    const startsBeforeRequestedEnd =
-      endsAt === null || assignment.startsAt < endsAt;
-    const endsAfterRequestedStart =
-      assignment.endsAt === null || assignment.endsAt > startsAt;
-
-    return startsBeforeRequestedEnd && endsAfterRequestedStart;
-  }
-
-  private isAssignmentActive(assignment: UserRole, now: Date) {
-    if (assignment.revokedAt) {
-      return false;
-    }
-
-    if (assignment.startsAt > now) {
-      return false;
-    }
-
-    if (assignment.endsAt && assignment.endsAt <= now) {
-      return false;
-    }
-
-    return true;
-  }
-
-  private parseDate(value: string, fieldName: string) {
-    const parsed = new Date(value);
-
-    if (Number.isNaN(parsed.getTime())) {
-      throw new ConflictException(`${fieldName} must be a valid ISO date.`);
-    }
-
-    return parsed;
-  }
-
-  private validateAppointmentWindow(startsAt: Date, endsAt: Date, now: Date) {
-    if (endsAt <= startsAt) {
-      throw new ConflictException('endsAt must be later than startsAt.');
-    }
-
-    if (startsAt < now) {
-      throw new ConflictException('startsAt cannot be in the past.');
-    }
-  }
-}
