@@ -630,10 +630,12 @@ export class UsersService {
       ? (user as any).member.positionAssignments
       : [];
 
-    const protectedCustomRoleCodes = new Set([
+    const reservedBuiltInRoleCodes = new Set([
       'SYSTEM_OWNER',
       'SUPER_ADMINISTRATOR',
       'ADMINISTRATOR',
+      'EXECUTIVE',
+      'MEMBER',
     ]);
     const protectedCustomRolePermissionCodes = new Set([
       'governance.assignments.create',
@@ -648,18 +650,27 @@ export class UsersService {
     // Custom roles may grant ordinary module permissions, but they must not
     // confer user/access administration, system administration, or protected
     // governance mutation capabilities. Keep built-in system roles intact.
-    const effectiveRoles = directRoles.map((userRole: any) => {
-      const role = userRole.role;
+    const effectiveRoles = directRoles
+      .filter((userRole: any) => {
+        const role = userRole.role;
 
-      if (
-        !role ||
-        role.isSystemRole ||
-        protectedCustomRoleCodes.has(role.code)
-      ) {
-        return userRole;
-      }
+        // A reserved code is trusted only when it belongs to a genuine
+        // seeded system role. Never let a malformed custom role inherit the
+        // built-in role's identity or bypass custom-role permission filtering.
+        return !(
+          role &&
+          reservedBuiltInRoleCodes.has(role.code) &&
+          role.isSystemRole !== true
+        );
+      })
+      .map((userRole: any) => {
+        const role = userRole.role;
 
-      return {
+        if (!role || role.isSystemRole) {
+          return userRole;
+        }
+
+        return {
         ...userRole,
         role: {
           ...role,
@@ -675,13 +686,15 @@ export class UsersService {
             },
           ),
         },
-      };
-    });
+        };
+      });
 
     const protectedGovernanceRoleCodes = new Set([
       'SYSTEM_OWNER',
       'SUPER_ADMINISTRATOR',
       'ADMINISTRATOR',
+      'EXECUTIVE',
+      'MEMBER',
     ]);
     const protectedGovernancePermissionCodes = new Set([
       'governance.assignments.create',
