@@ -142,4 +142,14 @@ describe('RolesService', () => {
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+  it('rejects the reserved SYSTEM_OWNER role code', async () => {
+    role.code = 'SYSTEM_OWNER';
+
+    await expect(
+      service.assignUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
 });
