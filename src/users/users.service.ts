@@ -671,7 +671,7 @@ export class UsersService {
         }
 
         return {
-        ...userRole,
+          ...userRole,
         role: {
           ...role,
           rolePermissions: (role.rolePermissions ?? []).filter(
@@ -685,7 +685,7 @@ export class UsersService {
               );
             },
           ),
-        },
+          },
         };
       });
 
@@ -693,8 +693,6 @@ export class UsersService {
       'SYSTEM_OWNER',
       'SUPER_ADMINISTRATOR',
       'ADMINISTRATOR',
-      'EXECUTIVE',
-      'MEMBER',
     ]);
     const protectedGovernancePermissionCodes = new Set([
       'governance.assignments.create',
