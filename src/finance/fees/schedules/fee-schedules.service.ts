@@ -20,10 +20,14 @@ import { UpdateFeeScheduleDto } from './dto/update-fee-schedule.dto';
 export class FeeSchedulesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(organizationId: string) {
+  async findAll(
+    organizationId: string,
+    feeDefinitionId: string,
+  ) {
     return this.prisma.feeSchedule.findMany({
       where: {
         organizationId,
+        feeDefinitionId,
       },
       orderBy: {
         effectiveFrom: 'desc',
