@@ -323,10 +323,17 @@ export class PaymentsService {
       return payment;
     }
 
+    if (payment.method === PaymentMethod.MPESA) {
+      throw new BadRequestException(
+        'M-Pesa payments can only be completed through a verified provider callback.',
+      );
+    }
+
     if (
       payment.status === PaymentStatus.CANCELLED ||
       payment.status === PaymentStatus.FAILED ||
-      payment.status === PaymentStatus.REFUNDED
+      payment.status === PaymentStatus.REFUNDED ||
+      payment.status === PaymentStatus.PARTIALLY_REFUNDED
     ) {
       throw new BadRequestException(
         'This payment cannot be marked as completed from its current status.',
