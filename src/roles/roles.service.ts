@@ -473,7 +473,7 @@ export class RolesService {
         },
       });
 
-      if (existingAssignment && !existingAssignment.revokedAt) {
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, null)) {
         throw new ConflictException(
           'This user already has an active Super Administrator appointment.',
         );
@@ -548,7 +548,7 @@ export class RolesService {
         },
       });
 
-      if (existingAssignment && !existingAssignment.revokedAt) {
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
         throw new ConflictException(
           'This user already has an active Administrator appointment.',
         );
@@ -620,7 +620,7 @@ export class RolesService {
       },
     });
 
-    if (existingAssignment && !existingAssignment.revokedAt) {
+    if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
       throw new ConflictException(
         'This user already has an active Executive appointment.',
       );
@@ -668,7 +668,7 @@ export class RolesService {
       },
     });
 
-    if (existingAssignment && !existingAssignment.revokedAt) {
+    if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
       throw new ConflictException('This user already has this role.');
     }
 
@@ -804,6 +804,23 @@ export class RolesService {
         },
       ],
     };
+  }
+
+  private hasOverlappingAppointment(
+    assignment: UserRole | null,
+    startsAt: Date,
+    endsAt: Date | null,
+  ) {
+    if (!assignment || assignment.revokedAt) {
+      return false;
+    }
+
+    const startsBeforeRequestedEnd =
+      endsAt === null || assignment.startsAt < endsAt;
+    const endsAfterRequestedStart =
+      assignment.endsAt === null || assignment.endsAt > startsAt;
+
+    return startsBeforeRequestedEnd && endsAfterRequestedStart;
   }
 
   private isAssignmentActive(assignment: UserRole, now: Date) {
