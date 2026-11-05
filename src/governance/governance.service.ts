@@ -20,6 +20,31 @@ import { UpdatePositionAssignmentDto } from './dto/update-position-assignment.dt
 import { UpdatePositionDto } from './dto/update-position.dto';
 import { UpdateTermDto } from './dto/update-term.dto';
 
+const PROTECTED_GOVERNANCE_ROLE_CODES = new Set([
+  'SYSTEM_OWNER',
+  'SUPER_ADMINISTRATOR',
+  'ADMINISTRATOR',
+]);
+
+const PROTECTED_GOVERNANCE_PERMISSION_CODES = new Set([
+  'governance.assignments.create',
+  'governance.assignments.update',
+  'governance.assignments.activate',
+  'governance.assignments.end',
+  'governance.assignments.revoke',
+  'governance.positions.manage',
+  'governance.terms.manage',
+]);
+
+function isSafeGovernanceRolePermission(code: unknown): code is string {
+  return (
+    typeof code === 'string' &&
+    !code.startsWith('users.') &&
+    !code.startsWith('system.') &&
+    !PROTECTED_GOVERNANCE_PERMISSION_CODES.has(code)
+  );
+}
+
 @Injectable()
 export class GovernanceService {
   constructor(private readonly prisma: PrismaService) {}
@@ -216,15 +241,22 @@ export class GovernanceService {
       for (const assignmentRole of assignment.roles) {
         const role = assignmentRole.role;
 
-        if (!effectiveRoles.has(role.id)) {
-          effectiveRoles.set(role.id, {
-            id: role.id,
-            code: role.code,
-            name: role.name,
-            startsAt: assignment.startsAt,
-            endsAt: assignment.endsAt,
-          });
+        // Governance appointments must never surface administrative roles,
+        // even if a role was changed after the appointment was created.
+        if (
+          PROTECTED_GOVERNANCE_ROLE_CODES.has(role.code) ||
+          effectiveRoles.has(role.id)
+        ) {
+          continue;
         }
+
+        effectiveRoles.set(role.id, {
+          id: role.id,
+          code: role.code,
+          name: role.name,
+          startsAt: assignment.startsAt,
+          endsAt: assignment.endsAt,
+        });
       }
     }
 
@@ -242,10 +274,16 @@ export class GovernanceService {
 
     for (const assignment of assignments) {
       for (const assignmentRole of assignment.roles) {
-        for (const rolePermission of assignmentRole.role.rolePermissions) {
+        const role = assignmentRole.role;
+
+        if (PROTECTED_GOVERNANCE_ROLE_CODES.has(role.code)) {
+          continue;
+        }
+
+        for (const rolePermission of role.rolePermissions) {
           const code = rolePermission.permission?.code;
 
-          if (code) {
+          if (isSafeGovernanceRolePermission(code)) {
             effectivePermissions.add(code);
           }
         }
