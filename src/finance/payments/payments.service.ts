@@ -287,7 +287,10 @@ export class PaymentsService {
           organizationId,
         },
         include: {
+          member: true,
           allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
         },
       });
 
@@ -340,6 +343,12 @@ export class PaymentsService {
         where: {
           id,
           organizationId,
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
         },
       });
 
