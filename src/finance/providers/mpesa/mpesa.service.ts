@@ -429,6 +429,20 @@ export class MpesaService implements PaymentProvider {
             return;
           }
 
+          /*
+           * Serialize allocations for the same member. Different
+           * successful payments can complete concurrently, so lock
+           * the member row before reading charge balances. Under
+           * PostgreSQL READ COMMITTED, the next transaction then
+           * observes the balances committed by the previous one.
+           */
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "Member"
+            WHERE "id" = ${payment.memberId}
+            FOR UPDATE
+          `;
+
           let unallocated = new Prisma.Decimal(payment.amount);
           const charges = await tx.memberCharge.findMany({
             where: {
