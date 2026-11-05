@@ -138,6 +138,36 @@ describe('RolesService', () => {
     expect(tx.userRole.create).not.toHaveBeenCalled();
   });
 
+  it('requires dedicated Super Administrator permission for privileged appointments', async () => {
+    prisma.user.findFirst.mockImplementation(({ where }: any) =>
+      where.id === actorUserId
+        ? { id: actorUserId, organizationId, status: 'ACTIVE', isSystemOwner: false, userRoles: [] }
+        : user,
+    );
+
+    await expect(
+      service.assignUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('requires dedicated Administrator permission when revoking an Administrator appointment', async () => {
+    role.code = 'ADMINISTRATOR';
+    role.name = 'Administrator';
+    prisma.user.findFirst.mockImplementation(({ where }: any) =>
+      where.id === actorUserId
+        ? { id: actorUserId, organizationId, status: 'ACTIVE', isSystemOwner: false, userRoles: [] }
+        : user,
+    );
+
+    await expect(
+      service.removeUser(roleId, userId, organizationId, actorUserId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('does not allow ordinary role management to assign roles to the System Owner', async () => {
     user.isSystemOwner = true;
 
