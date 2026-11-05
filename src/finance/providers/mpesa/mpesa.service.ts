@@ -400,7 +400,7 @@ export class MpesaService implements PaymentProvider {
          * concurrent duplicate or out-of-order callbacks.
          */
         if (successful) {
-          await tx.payment.updateMany({
+          const completion = await tx.payment.updateMany({
             where: {
               id: payment.id,
               status: {
@@ -414,19 +414,100 @@ export class MpesaService implements PaymentProvider {
             },
             data: {
               status: PaymentStatus.COMPLETED,
-
-              paidAt:
-                metadata.transactionDate ??
-                new Date(),
-
-              reference:
-                metadata.mpesaReceiptNumber ??
-                payment.reference,
-
-              externalReference:
-                callback.CheckoutRequestID,
+              paidAt: metadata.transactionDate ?? new Date(),
+              reference: metadata.mpesaReceiptNumber ?? payment.reference,
+              externalReference: callback.CheckoutRequestID,
             },
           });
+
+          /*
+           * Only the callback that transitions the payment to
+           * COMPLETED may allocate it and issue its receipt.
+           * Duplicate/concurrent callbacks see count === 0.
+           */
+          if (completion.count !== 1) {
+            return;
+          }
+
+          let unallocated = new Prisma.Decimal(payment.amount);
+          const charges = await tx.memberCharge.findMany({
+            where: {
+              organizationId: payment.organizationId,
+              memberId: payment.memberId,
+              balance: { gt: 0 },
+              status: { notIn: ['WAIVED', 'CANCELLED'] },
+            },
+            orderBy: [
+              { dueDate: { sort: 'asc', nulls: 'last' } },
+              { createdAt: 'asc' },
+              { id: 'asc' },
+            ],
+          });
+
+          for (const charge of charges) {
+            if (unallocated.lessThanOrEqualTo(0)) {
+              break;
+            }
+
+            const chargeBalance = new Prisma.Decimal(charge.balance);
+            const allocationAmount = Prisma.Decimal.min(
+              unallocated,
+              chargeBalance,
+            );
+
+            if (allocationAmount.lessThanOrEqualTo(0)) {
+              continue;
+            }
+
+            await tx.paymentAllocation.create({
+              data: {
+                paymentId: payment.id,
+                chargeId: charge.id,
+                amount: allocationAmount,
+              },
+            });
+
+            const newAmountPaid = new Prisma.Decimal(charge.amountPaid)
+              .plus(allocationAmount);
+            const newBalance = new Prisma.Decimal(charge.amountDue)
+              .minus(newAmountPaid);
+
+            await tx.memberCharge.update({
+              where: { id: charge.id },
+              data: {
+                amountPaid: newAmountPaid,
+                balance: Prisma.Decimal.max(newBalance, 0),
+                status: newBalance.lessThanOrEqualTo(0)
+                  ? 'PAID'
+                  : 'PARTIALLY_PAID',
+              },
+            });
+
+            unallocated = unallocated.minus(allocationAmount);
+          }
+
+          const existingReceipt = await tx.receipt.findUnique({
+            where: { paymentId: payment.id },
+            select: { id: true },
+          });
+
+          if (!existingReceipt) {
+            const receiptNumber = await this.generateReceiptNumber(
+              tx,
+              payment.organizationId,
+            );
+
+            await tx.receipt.create({
+              data: {
+                organizationId: payment.organizationId,
+                memberId: payment.memberId,
+                paymentId: payment.id,
+                receiptNumber,
+                amount: payment.amount,
+                currency: payment.currency,
+              },
+            });
+          }
 
           return;
         }
@@ -462,6 +543,31 @@ export class MpesaService implements PaymentProvider {
     return {
       received: true,
     };
+  }
+
+  private async generateReceiptNumber(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<string> {
+    const year = new Date().getFullYear();
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const random = Math.floor(100000 + Math.random() * 900000);
+      const receiptNumber = `KUHRSA-${year}-${random}`;
+
+      const existing = await tx.receipt.findFirst({
+        where: { organizationId, receiptNumber },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        return receiptNumber;
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'Unable to generate a unique receipt number for the completed M-Pesa payment.',
+    );
   }
 
   private async resolveOrganizationId(
