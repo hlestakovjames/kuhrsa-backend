@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -952,23 +953,7 @@ export class GovernanceService {
     const roleIds = [...new Set(dto.roleIds ?? [])];
 
     if (roleIds.length > 0) {
-      const roles = await this.prisma.role.findMany({
-        where: {
-          organizationId,
-          id: {
-            in: roleIds,
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      if (roles.length !== roleIds.length) {
-        throw new NotFoundException(
-          'One or more management roles were not found in this organization.',
-        );
-      }
+      await this.validatePositionAssignmentRoles(organizationId, roleIds);
     }
 
     const conflictingPositionAssignment =
@@ -1196,23 +1181,7 @@ export class GovernanceService {
     if (dto.roleIds !== undefined) {
       const roleIds = [...new Set(dto.roleIds)];
 
-      const roles = await this.prisma.role.findMany({
-        where: {
-          organizationId,
-          id: {
-            in: roleIds,
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      if (roles.length !== roleIds.length) {
-        throw new NotFoundException(
-          'One or more management roles were not found in this organization.',
-        );
-      }
+      await this.validatePositionAssignmentRoles(organizationId, roleIds);
 
       data.roles = {
         deleteMany: {},
@@ -1536,4 +1505,73 @@ export class GovernanceService {
       return updatedAssignment;
     });
   }
+  private async validatePositionAssignmentRoles(
+    organizationId: string,
+    roleIds: string[],
+  ) {
+    if (roleIds.length === 0) {
+      return;
+    }
+
+    const roles = await this.prisma.role.findMany({
+      where: {
+        organizationId,
+        id: { in: roleIds },
+      },
+      select: {
+        id: true,
+        code: true,
+        rolePermissions: {
+          select: {
+            permission: {
+              select: { code: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (roles.length !== roleIds.length) {
+      throw new NotFoundException(
+        'One or more management roles were not found in this organization.',
+      );
+    }
+
+    const protectedRoleCodes = new Set([
+      'SYSTEM_OWNER',
+      'SUPER_ADMINISTRATOR',
+      'ADMINISTRATOR',
+    ]);
+    const protectedPermissionCodes = new Set([
+      'governance.assignments.create',
+      'governance.assignments.update',
+      'governance.assignments.activate',
+      'governance.assignments.end',
+      'governance.assignments.revoke',
+      'governance.positions.manage',
+      'governance.terms.manage',
+    ]);
+
+    const privilegedRole = roles.find(
+      (role) =>
+        protectedRoleCodes.has(role.code) ||
+        role.rolePermissions.some(({ permission }) => {
+          const code = permission.code;
+          return (
+            code.startsWith('users.') ||
+            code.startsWith('system.') ||
+            protectedPermissionCodes.has(code)
+          );
+        }),
+    );
+
+    if (privilegedRole) {
+      throw new ForbiddenException({
+        code: 'PRIVILEGED_ROLE_NOT_ALLOWED_FOR_GOVERNANCE_ASSIGNMENT',
+        message:
+          'Administrative and access-management roles must be assigned through dedicated role management, not governance position assignments.',
+      });
+    }
+  }
+
 }
