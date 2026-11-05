@@ -21,6 +21,8 @@ import { PaymentProvidersService } from './providers/payment-providers.service';
 import { MpesaController } from './providers/mpesa/mpesa.controller';
 import { MpesaPaymentService } from './providers/mpesa/mpesa-payment.service';
 import { MpesaService } from './providers/mpesa/mpesa.service';
+import { MemberFinanceController } from './member-finance.controller';
+import { MemberFinanceService } from './member-finance.service';
 
 @Module({
   controllers: [
@@ -34,6 +36,7 @@ import { MpesaService } from './providers/mpesa/mpesa.service';
     ReceiptsController,
     PaymentProvidersController,
     MpesaController,
+    MemberFinanceController,
   ],
   providers: [
     FinanceService,
@@ -47,6 +50,7 @@ import { MpesaService } from './providers/mpesa/mpesa.service';
     PaymentProvidersService,
     MpesaService,
     MpesaPaymentService,
+    MemberFinanceService,
   ],
   exports: [
     FinanceService,
