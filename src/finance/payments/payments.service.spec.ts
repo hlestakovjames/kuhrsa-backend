@@ -169,6 +169,37 @@ describe('PaymentsService status lifecycle', () => {
     expect(paymentUpdate).not.toHaveBeenCalled();
   });
 
+  it('does not cancel a completed payment', async () => {
+    paymentFindFirst.mockResolvedValue({
+      ...existingPayment,
+      status: PaymentStatus.COMPLETED,
+      paidAt: new Date(),
+    });
+
+    await expect(
+      service.cancel('org-1', 'payment-1'),
+    ).rejects.toThrow(
+      'A completed or partially refunded payment cannot be cancelled.',
+    );
+
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not cancel a payment with an issued receipt', async () => {
+    paymentFindFirst.mockResolvedValue({
+      ...existingPayment,
+      receipt: { id: 'receipt-1', status: 'ISSUED' },
+    });
+
+    await expect(
+      service.cancel('org-1', 'payment-1'),
+    ).rejects.toThrow(
+      'A payment with an issued receipt cannot be cancelled.',
+    );
+
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+
   it('does not cancel a payment that already has allocations', async () => {
     paymentFindFirst.mockResolvedValue({
       ...existingPayment,
