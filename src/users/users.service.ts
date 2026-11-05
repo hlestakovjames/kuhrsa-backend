@@ -367,23 +367,6 @@ export class UsersService {
       throw new NotFoundException('Default MEMBER role is not configured.');
     }
 
-    let roleToAssign = memberRole;
-
-    if (dto.roleId) {
-      const requestedRole = await this.prisma.role.findFirst({
-        where: {
-          id: dto.roleId,
-          organizationId,
-        },
-      });
-
-      if (!requestedRole) {
-        throw new NotFoundException('Selected role was not found.');
-      }
-
-      roleToAssign = requestedRole;
-    }
-
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     const user = await this.prisma.$transaction(async (tx) => {
