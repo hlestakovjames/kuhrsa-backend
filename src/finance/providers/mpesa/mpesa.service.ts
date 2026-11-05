@@ -222,6 +222,76 @@ export class MpesaService implements PaymentProvider {
     const successful = callback.ResultCode === 0;
 
     /*
+     * A successful STK callback must contain the transaction
+     * amount, M-Pesa receipt and payer phone. Correlate the
+     * merchant request ID and normalized phone with the
+     * values recorded when the prompt was initiated.
+     *
+     * Incomplete or inconsistent success callbacks remain
+     * PROCESSING for independent reconciliation; they must
+     * never trigger charge allocation or receipt issuance.
+     */
+    if (successful) {
+      let phoneMatches = false;
+
+      if (
+        metadata.phoneNumber &&
+        payment.mpesaTransaction.phoneNumber
+      ) {
+        try {
+          phoneMatches =
+            this.normalizePhoneNumber(metadata.phoneNumber) ===
+            this.normalizePhoneNumber(
+              payment.mpesaTransaction.phoneNumber,
+            );
+        } catch {
+          phoneMatches = false;
+        }
+      }
+
+      const callbackIdentityIsValid =
+        metadata.amount !== undefined &&
+        Boolean(metadata.mpesaReceiptNumber) &&
+        Boolean(metadata.phoneNumber) &&
+        phoneMatches &&
+        Boolean(callback.MerchantRequestID) &&
+        callback.MerchantRequestID ===
+          payment.mpesaTransaction.merchantRequestId;
+
+      if (!callbackIdentityIsValid) {
+        await this.prisma.$transaction(
+          async (tx: Prisma.TransactionClient) => {
+            await tx.mpesaTransaction.update({
+              where: { paymentId: payment.id },
+              data: {
+                merchantRequestId:
+                  callback.MerchantRequestID ??
+                  payment.mpesaTransaction!.merchantRequestId,
+                checkoutRequestId: callback.CheckoutRequestID,
+                mpesaReceiptNumber:
+                  metadata.mpesaReceiptNumber ??
+                  payment.mpesaTransaction!.mpesaReceiptNumber,
+                phoneNumber:
+                  metadata.phoneNumber ??
+                  payment.mpesaTransaction!.phoneNumber,
+                resultCode: callback.ResultCode ?? null,
+                resultDescription:
+                  'Successful callback metadata is incomplete or does not match the initiated transaction; payment requires reconciliation.',
+                transactionDate:
+                  metadata.transactionDate ??
+                  payment.mpesaTransaction!.transactionDate,
+                callbackPayload:
+                  payload as Prisma.InputJsonValue,
+              },
+            });
+          },
+        );
+
+        return { received: true };
+      }
+    }
+
+    /*
      * Verify the callback amount against the original
      * payment amount whenever Safaricom supplies it.
      *
