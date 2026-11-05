@@ -310,6 +310,13 @@ export class MemberChargesService {
             dueDate,
           }),
         },
+        include: {
+          feeSchedule: {
+            include: {
+              feeDefinition: true,
+            },
+          },
+        },
       });
     });
   }
