@@ -75,6 +75,65 @@ describe('UsersService', () => {
     expect(service).toBeDefined();
   });
 
+  it('filters administrative permissions from governance-derived roles', () => {
+    const user = {
+      id: 'user-id',
+      userRoles: [],
+      member: {
+        positionAssignments: [
+          {
+            id: 'assignment-id',
+            startsAt: new Date('2026-01-01T00:00:00.000Z'),
+            endsAt: new Date('2027-01-01T00:00:00.000Z'),
+            roles: [
+              {
+                assignedAt: new Date('2026-01-01T00:00:00.000Z'),
+                assignedBy: 'actor-id',
+                role: {
+                  id: 'executive-role-id',
+                  code: 'EXECUTIVE',
+                  name: 'Executive',
+                  rolePermissions: [
+                    { permission: { code: 'governance.executive.view' } },
+                    { permission: { code: 'finance.payments.view' } },
+                    { permission: { code: 'users.roles.assign' } },
+                    { permission: { code: 'system.settings.manage' } },
+                    { permission: { code: 'governance.assignments.revoke' } },
+                  ],
+                },
+              },
+              {
+                assignedAt: new Date('2026-01-01T00:00:00.000Z'),
+                assignedBy: 'actor-id',
+                role: {
+                  id: 'admin-role-id',
+                  code: 'ADMINISTRATOR',
+                  name: 'Administrator',
+                  rolePermissions: [
+                    { permission: { code: 'membership.members.view' } },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const result = (service as any).withEffectiveRoles(user);
+
+    expect(result.userRoles).toHaveLength(1);
+    expect(result.userRoles[0].role.code).toBe('EXECUTIVE');
+    expect(
+      result.userRoles[0].role.rolePermissions.map(
+        (item: any) => item.permission.code,
+      ),
+    ).toEqual([
+      'governance.executive.view',
+      'finance.payments.view',
+    ]);
+  });
+
   it('always assigns the baseline MEMBER role during user creation', async () => {
     const result = await service.create(
       'organization-id',
