@@ -412,9 +412,9 @@ export class UsersService {
             email: createdUser.email,
             status: createdUser.status,
             role: {
-              id: roleToAssign.id,
-              name: roleToAssign.name,
-              code: roleToAssign.code,
+              id: memberRole.id,
+              name: memberRole.name,
+              code: memberRole.code,
             },
           },
         },
