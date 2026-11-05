@@ -167,7 +167,7 @@ export class GovernanceController {
 
   @Post('assignments')
   @UseGuards(PermissionsGuard)
-  @Permissions('governance.assignments.manage')
+  @Permissions('governance.assignments.create')
   async createPositionAssignment(
     @Body() dto: CreatePositionAssignmentDto,
     @Request() req: AuthenticatedRequest,
@@ -181,7 +181,7 @@ export class GovernanceController {
 
   @Patch('assignments/:id')
   @UseGuards(PermissionsGuard)
-  @Permissions('governance.assignments.manage')
+  @Permissions('governance.assignments.update')
   async updatePositionAssignment(
     @Param('id') id: string,
     @Body() dto: UpdatePositionAssignmentDto,
@@ -197,7 +197,7 @@ export class GovernanceController {
 
   @Post('assignments/:id/activate')
   @UseGuards(PermissionsGuard)
-  @Permissions('governance.assignments.manage')
+  @Permissions('governance.assignments.activate')
   async activatePositionAssignment(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
@@ -211,7 +211,7 @@ export class GovernanceController {
 
   @Post('assignments/:id/end')
   @UseGuards(PermissionsGuard)
-  @Permissions('governance.assignments.manage')
+  @Permissions('governance.assignments.end')
   async endPositionAssignment(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
@@ -225,7 +225,7 @@ export class GovernanceController {
 
   @Post('assignments/:id/revoke')
   @UseGuards(PermissionsGuard)
-  @Permissions('governance.assignments.manage')
+  @Permissions('governance.assignments.revoke')
   async revokePositionAssignment(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
