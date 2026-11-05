@@ -298,6 +298,19 @@ export class RolesService {
       );
     }
 
+    if (
+      role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR ||
+      role.code === GOVERNANCE_ROLE_CODES.ADMINISTRATOR
+    ) {
+      await this.requirePrivilegedAppointmentPermission(
+        actorUserId,
+        organizationId,
+        role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR
+          ? 'system.super_administrators.manage'
+          : 'system.administrators.manage',
+      );
+    }
+
     if (role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR) {
       return this.assignSuperAdministrator(
         role,
@@ -383,6 +396,19 @@ export class RolesService {
     ) {
       throw new ForbiddenException(
         `${role.code} is reserved for its seeded system role and cannot be changed through ordinary role management.`,
+      );
+    }
+
+    if (
+      role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR ||
+      role.code === GOVERNANCE_ROLE_CODES.ADMINISTRATOR
+    ) {
+      await this.requirePrivilegedAppointmentPermission(
+        actorUserId,
+        organizationId,
+        role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR
+          ? 'system.super_administrators.manage'
+          : 'system.administrators.manage',
       );
     }
 
@@ -787,6 +813,53 @@ export class RolesService {
         },
       },
     });
+  }
+
+  private async requirePrivilegedAppointmentPermission(
+    actorUserId: string,
+    organizationId: string,
+    permissionCode: string,
+  ) {
+    const now = new Date();
+    const actor = await this.prisma.user.findFirst({
+      where: {
+        id: actorUserId,
+        organizationId,
+        status: 'ACTIVE',
+      },
+      select: {
+        isSystemOwner: true,
+        userRoles: {
+          where: {
+            revokedAt: null,
+            startsAt: { lte: now },
+            OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+          },
+          select: {
+            role: {
+              select: {
+                rolePermissions: {
+                  where: { permission: { code: permissionCode } },
+                  select: { id: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const authorized =
+      actor?.isSystemOwner === true ||
+      actor?.userRoles.some(
+        (assignment) => assignment.role.rolePermissions.length > 0,
+      ) === true;
+
+    if (!authorized) {
+      throw new ForbiddenException(
+        `The ${permissionCode} permission is required for this privileged appointment change.`,
+      );
+    }
   }
 
   private async lockOrganizationRoleAssignments(
