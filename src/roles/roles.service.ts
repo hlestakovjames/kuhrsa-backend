@@ -14,6 +14,7 @@ const GOVERNANCE_ROLE_CODES = {
   ADMINISTRATOR: 'ADMINISTRATOR',
   EXECUTIVE: 'EXECUTIVE',
   MEMBER: 'MEMBER',
+  SYSTEM_OWNER: 'SYSTEM_OWNER',
 } as const;
 
 const ROLE_LIMITS = {
@@ -135,6 +136,12 @@ export class RolesService {
     dto: CreateRoleDto,
   ) {
     const code = dto.code.trim().toUpperCase();
+
+    if (code === GOVERNANCE_ROLE_CODES.SYSTEM_OWNER) {
+      throw new ForbiddenException(
+        'System Owner is a protected platform identity, not an assignable organization role.',
+      );
+    }
 
     const existingRole = await this.prisma.role.findUnique({
       where: {
@@ -274,9 +281,12 @@ export class RolesService {
       throw new NotFoundException('User not found.');
     }
 
-    if (user.isSystemOwner) {
+    if (
+      role.code === GOVERNANCE_ROLE_CODES.SYSTEM_OWNER ||
+      user.isSystemOwner
+    ) {
       throw new ForbiddenException(
-        'The System Owner role assignments cannot be changed through ordinary role management.',
+        'System Owner is a protected platform identity and cannot be assigned through ordinary role management.',
       );
     }
 
