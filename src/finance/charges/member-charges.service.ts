@@ -54,6 +54,20 @@ export class MemberChargesService {
         createdAt: 'desc',
       },
       include: {
+        member: {
+          select: {
+            id: true,
+            memberNumber: true,
+            registrationNumber: true,
+            user: {
+              select: {
+                firstName: true,
+                middleName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
         feeSchedule: {
           include: {
             feeDefinition: true,
