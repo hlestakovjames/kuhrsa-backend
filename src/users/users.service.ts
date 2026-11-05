@@ -630,7 +630,53 @@ export class UsersService {
       ? (user as any).member.positionAssignments
       : [];
 
-    const effectiveRoles = [...directRoles];
+    const protectedCustomRoleCodes = new Set([
+      'SYSTEM_OWNER',
+      'SUPER_ADMINISTRATOR',
+      'ADMINISTRATOR',
+    ]);
+    const protectedCustomRolePermissionCodes = new Set([
+      'governance.assignments.create',
+      'governance.assignments.update',
+      'governance.assignments.activate',
+      'governance.assignments.end',
+      'governance.assignments.revoke',
+      'governance.positions.manage',
+      'governance.terms.manage',
+    ]);
+
+    // Custom roles may grant ordinary module permissions, but they must not
+    // confer user/access administration, system administration, or protected
+    // governance mutation capabilities. Keep built-in system roles intact.
+    const effectiveRoles = directRoles.map((userRole: any) => {
+      const role = userRole.role;
+
+      if (
+        !role ||
+        role.isSystemRole ||
+        protectedCustomRoleCodes.has(role.code)
+      ) {
+        return userRole;
+      }
+
+      return {
+        ...userRole,
+        role: {
+          ...role,
+          rolePermissions: (role.rolePermissions ?? []).filter(
+            (rolePermission: any) => {
+              const code = rolePermission.permission?.code;
+              return (
+                typeof code === 'string' &&
+                !code.startsWith('users.') &&
+                !code.startsWith('system.') &&
+                !protectedCustomRolePermissionCodes.has(code)
+              );
+            },
+          ),
+        },
+      };
+    });
 
     const protectedGovernanceRoleCodes = new Set([
       'SYSTEM_OWNER',
