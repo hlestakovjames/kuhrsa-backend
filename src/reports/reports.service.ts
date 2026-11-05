@@ -241,16 +241,67 @@ export class ReportsService {
       );
     }
 
+    const queries: Record<string, string> = {
+      Member: `SELECT
+          m.*,
+          concat_ws(' ', NULLIF(u."firstName", ''), NULLIF(u."middleName", ''), NULLIF(u."lastName", '')) AS "memberName"
+        FROM "Member" m
+        LEFT JOIN "User" u ON u.id = m."userId"
+        WHERE m."organizationId" = $1
+        ORDER BY m."createdAt" DESC`,
+      MembershipPeriod: `SELECT
+          mp.*,
+          m."memberNumber",
+          m."registrationNumber",
+          concat_ws(' ', NULLIF(u."firstName", ''), NULLIF(u."middleName", ''), NULLIF(u."lastName", '')) AS "memberName"
+        FROM "MembershipPeriod" mp
+        INNER JOIN "Member" m ON m.id = mp."memberId"
+        LEFT JOIN "User" u ON u.id = m."userId"
+        WHERE mp."organizationId" = $1
+        ORDER BY mp."createdAt" DESC`,
+      Payment: `SELECT
+          p.*,
+          m."memberNumber",
+          m."registrationNumber",
+          concat_ws(' ', NULLIF(u."firstName", ''), NULLIF(u."middleName", ''), NULLIF(u."lastName", '')) AS "memberName"
+        FROM "Payment" p
+        INNER JOIN "Member" m ON m.id = p."memberId"
+        LEFT JOIN "User" u ON u.id = m."userId"
+        WHERE p."organizationId" = $1
+        ORDER BY p."createdAt" DESC`,
+      MemberCharge: `SELECT
+          c.*,
+          m."memberNumber",
+          m."registrationNumber",
+          concat_ws(' ', NULLIF(u."firstName", ''), NULLIF(u."middleName", ''), NULLIF(u."lastName", '')) AS "memberName"
+        FROM "MemberCharge" c
+        INNER JOIN "Member" m ON m.id = c."memberId"
+        LEFT JOIN "User" u ON u.id = m."userId"
+        WHERE c."organizationId" = $1
+        ORDER BY c."createdAt" DESC`,
+      Receipt: `SELECT
+          r.*,
+          m."memberNumber",
+          m."registrationNumber",
+          concat_ws(' ', NULLIF(u."firstName", ''), NULLIF(u."middleName", ''), NULLIF(u."lastName", '')) AS "memberName"
+        FROM "Receipt" r
+        INNER JOIN "Member" m ON m.id = r."memberId"
+        LEFT JOIN "User" u ON u.id = m."userId"
+        WHERE r."organizationId" = $1
+        ORDER BY r."createdAt" DESC`,
+    };
+
+    const query = queries[table];
+    if (!query) {
+      throw new BadRequestException(
+        'Invalid export dataset.',
+      );
+    }
+
     const rows =
       await this.prisma.$queryRawUnsafe<
         Record<string, unknown>[]
-      >(
-        `SELECT *
-         FROM "${table}"
-         WHERE "organizationId" = $1
-         ORDER BY "createdAt" DESC`,
-        organizationId,
-      );
+      >(query, organizationId);
 
     return rows;
   }
