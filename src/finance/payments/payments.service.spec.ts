@@ -121,6 +121,36 @@ describe('PaymentsService status lifecycle', () => {
     );
   });
 
+  it('does not manually complete an M-Pesa payment outside its verified callback', async () => {
+    paymentFindFirst.mockResolvedValue({
+      ...existingPayment,
+      method: PaymentMethod.MPESA,
+    });
+
+    await expect(
+      service.markCompleted('org-1', 'payment-1'),
+    ).rejects.toThrow(
+      'M-Pesa payments can only be completed through a verified provider callback.',
+    );
+
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a partially refunded payment to completed', async () => {
+    paymentFindFirst.mockResolvedValue({
+      ...existingPayment,
+      status: PaymentStatus.PARTIALLY_REFUNDED,
+    });
+
+    await expect(
+      service.markCompleted('org-1', 'payment-1'),
+    ).rejects.toThrow(
+      'This payment cannot be marked as completed from its current status.',
+    );
+
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+
   it('does not cancel a payment that already has allocations', async () => {
     paymentFindFirst.mockResolvedValue({
       ...existingPayment,
