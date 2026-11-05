@@ -308,6 +308,21 @@ export class PaymentsService {
         );
       }
 
+      if (
+        payment.status === PaymentStatus.COMPLETED ||
+        payment.status === PaymentStatus.PARTIALLY_REFUNDED
+      ) {
+        throw new BadRequestException(
+          'A completed or partially refunded payment cannot be cancelled. Use the refund or adjustment workflow instead.',
+        );
+      }
+
+      if (payment.receipt?.status === 'ISSUED') {
+        throw new BadRequestException(
+          'A payment with an issued receipt cannot be cancelled. Void the receipt and use the refund or adjustment workflow instead.',
+        );
+      }
+
       if (payment.allocations.length > 0) {
         throw new BadRequestException(
           'A payment with allocations cannot be cancelled. Reverse the allocation through the appropriate financial workflow.',
@@ -321,6 +336,12 @@ export class PaymentsService {
         data: {
           status: PaymentStatus.CANCELLED,
           paidAt: null,
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
         },
       });
     });
@@ -384,6 +405,12 @@ export class PaymentsService {
         data: {
           status: PaymentStatus.COMPLETED,
           paidAt: new Date(),
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
         },
       });
     });
