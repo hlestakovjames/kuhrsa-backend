@@ -57,7 +57,11 @@ describe('RolesService', () => {
         findFirst: jest.fn().mockResolvedValue(role),
       },
       user: {
-        findFirst: jest.fn().mockResolvedValue(user),
+        findFirst: jest.fn(({ where }: any) =>
+          where.id === actorUserId
+            ? { id: actorUserId, organizationId, status: 'ACTIVE', isSystemOwner: true, userRoles: [] }
+            : user,
+        ),
       },
       $transaction: jest.fn(async (callback: (transaction: any) => unknown) =>
         callback(tx),
