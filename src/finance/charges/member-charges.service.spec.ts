@@ -1,4 +1,4 @@
-import { ChargeStatus } from '../../../generated/prisma/client';
+import { ChargeStatus, FeeScheduleStatus } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MemberChargesService } from './member-charges.service';
 
@@ -6,13 +6,14 @@ describe('MemberChargesService allocation coordination', () => {
   let service: MemberChargesService;
   let tx: {
     $queryRaw: jest.Mock;
+    member: { findFirst: jest.Mock };
+    feeSchedule: { findFirst: jest.Mock };
     memberCharge: {
       findFirst: jest.Mock;
+      create: jest.Mock;
       update: jest.Mock;
     };
-    paymentAllocation: {
-      findMany: jest.Mock;
-    };
+    paymentAllocation: { findMany: jest.Mock };
   };
 
   const charge = {
@@ -29,8 +30,20 @@ describe('MemberChargesService allocation coordination', () => {
   beforeEach(() => {
     tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
+      member: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
+      },
+      feeSchedule: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'schedule-1',
+          organizationId: 'org-1',
+          status: FeeScheduleStatus.ACTIVE,
+          currency: 'KES',
+        }),
+      },
       memberCharge: {
-        findFirst: jest.fn().mockResolvedValue(charge),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(charge),
         update: jest.fn().mockResolvedValue(charge),
       },
       paymentAllocation: {
@@ -48,6 +61,53 @@ describe('MemberChargesService allocation coordination', () => {
     service = new MemberChargesService(
       prisma as unknown as PrismaService,
     );
+  });
+
+  it('locks the member before checking and creating a charge', async () => {
+    await service.create('org-1', {
+      memberId: 'member-1',
+      feeScheduleId: 'schedule-1',
+      amountDue: 100,
+    });
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.member.findFirst.mock.invocationCallOrder[0],
+    );
+    expect(tx.member.findFirst.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.memberCharge.findFirst.mock.invocationCallOrder[0],
+    );
+    expect(tx.memberCharge.findFirst.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.memberCharge.create.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not create a charge when the member does not exist', async () => {
+    tx.member.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.create('org-1', {
+        memberId: 'missing-member',
+        feeScheduleId: 'schedule-1',
+        amountDue: 100,
+      }),
+    ).rejects.toThrow('Member not found.');
+
+    expect(tx.memberCharge.create).not.toHaveBeenCalled();
+  });
+
+  it('does not create a duplicate charge', async () => {
+    tx.memberCharge.findFirst.mockResolvedValue(charge);
+
+    await expect(
+      service.create('org-1', {
+        memberId: 'member-1',
+        feeScheduleId: 'schedule-1',
+        amountDue: 100,
+      }),
+    ).rejects.toThrow('A matching member charge already exists.');
+
+    expect(tx.memberCharge.create).not.toHaveBeenCalled();
   });
 
   it('locks the charge before changing its amount or description', async () => {
