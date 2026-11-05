@@ -84,6 +84,10 @@ describe('PaymentsService status lifecycle', () => {
   });
 
   it('does not allow a legacy status field through generic update', async () => {
+    paymentFindFirst
+      .mockResolvedValueOnce(existingPayment)
+      .mockResolvedValueOnce(null);
+
     const dto = {
       reference: 'manual-reference-1',
       status: PaymentStatus.COMPLETED,
