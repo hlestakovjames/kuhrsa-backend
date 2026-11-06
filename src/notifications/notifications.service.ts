@@ -104,6 +104,8 @@ export class NotificationsService {
     subject?: string;
     templateKey?: string;
     metadata?: Prisma.InputJsonValue;
+    status?: NotificationStatus;
+    sentAt?: Date;
   }) {
     return this.prisma.notification.create({
       data: {
