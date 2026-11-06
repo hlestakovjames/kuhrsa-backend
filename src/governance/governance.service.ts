@@ -194,6 +194,7 @@ export class GovernanceService {
                 id: true,
                 code: true,
                 name: true,
+                isSystemRole: true,
                 rolePermissions: {
                   select: {
                     permission: {
@@ -266,7 +267,14 @@ export class GovernanceService {
       for (const rolePermission of userRole.role.rolePermissions) {
         const code = rolePermission.permission?.code;
 
-        if (code) {
+        // Preserve protected permissions only for genuine seeded system
+        // roles. Legacy custom-role grants are filtered just like they are
+        // when the authenticated user is loaded by UsersService.
+        if (
+          code &&
+          (userRole.role.isSystemRole ||
+            isSafeGovernanceRolePermission(code))
+        ) {
           effectivePermissions.add(code);
         }
       }
