@@ -4,6 +4,7 @@ import { MpesaService } from './mpesa.service';
 
 describe('MpesaService callback processing', () => {
   let service: MpesaService;
+  let notificationsService: { notifyMemberPaymentConfirmed: jest.Mock };
   let prisma: {
     payment: { findFirst: jest.Mock };
     $transaction: jest.Mock;
@@ -94,8 +95,14 @@ describe('MpesaService callback processing', () => {
       payment: { findFirst: jest.fn().mockResolvedValue(payment) },
       $transaction: jest.fn((work) => work(tx)),
     };
+    notificationsService = {
+      notifyMemberPaymentConfirmed: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
 
-    service = new MpesaService(prisma as unknown as PrismaService);
+    service = new MpesaService(
+      prisma as unknown as PrismaService,
+      notificationsService as never,
+    );
   });
 
   it('allocates a successful payment oldest-first and issues one receipt', async () => {
@@ -133,6 +140,18 @@ describe('MpesaService callback processing', () => {
     );
   });
 
+  it('creates one in-app confirmation after a verified callback completes the payment', async () => {
+    await service.handleCallback(callback() as never);
+
+    expect(notificationsService.notifyMemberPaymentConfirmed).toHaveBeenCalledTimes(1);
+    expect(notificationsService.notifyMemberPaymentConfirmed).toHaveBeenCalledWith(
+      'member-1',
+      'org-1',
+      '150',
+      'KES',
+    );
+  });
+
   it('does not allocate or issue a receipt when another callback already completed the payment', async () => {
     tx.payment.updateMany.mockResolvedValue({ count: 0 });
 
@@ -142,6 +161,7 @@ describe('MpesaService callback processing', () => {
     expect(tx.paymentAllocation.create).not.toHaveBeenCalled();
     expect(tx.memberCharge.update).not.toHaveBeenCalled();
     expect(tx.receipt.create).not.toHaveBeenCalled();
+    expect(notificationsService.notifyMemberPaymentConfirmed).not.toHaveBeenCalled();
   });
 
   it('marks a failed STK callback without allocating or issuing a receipt', async () => {
