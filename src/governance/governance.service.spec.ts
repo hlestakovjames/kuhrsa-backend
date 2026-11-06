@@ -120,8 +120,26 @@ describe('GovernanceService role assignment safeguards', () => {
               id: 'direct-admin-role-id',
               code: 'ADMINISTRATOR',
               name: 'Administrator',
+              isSystemRole: true,
               rolePermissions: [
                 { permission: { code: 'users.roles.assign' } },
+              ],
+            },
+          },
+          {
+            id: 'direct-custom-assignment',
+            startsAt: new Date('2026-01-01T00:00:00.000Z'),
+            endsAt: null,
+            role: {
+              id: 'direct-custom-role-id',
+              code: 'CUSTOM_DIRECT',
+              name: 'Custom Direct',
+              isSystemRole: false,
+              rolePermissions: [
+                { permission: { code: 'membership.members.view' } },
+                { permission: { code: 'users.users.suspend' } },
+                { permission: { code: 'system.settings.manage' } },
+                { permission: { code: 'governance.assignments.revoke' } },
               ],
             },
           },
@@ -133,12 +151,17 @@ describe('GovernanceService role assignment safeguards', () => {
 
     expect(result.access.roles.map((role) => role.code)).toEqual([
       'ADMINISTRATOR',
+      'CUSTOM_DIRECT',
       'CUSTOM_EXECUTIVE',
     ]);
     expect(result.access.permissions).toEqual([
       'finance.payments.view',
+      'membership.members.view',
       'users.roles.assign',
     ]);
+    expect(result.access.permissions).not.toContain('users.users.suspend');
+    expect(result.access.permissions).not.toContain('system.settings.manage');
+    expect(result.access.permissions).not.toContain('governance.assignments.revoke');
   });
 
   it('rejects role IDs outside the organization', async () => {
