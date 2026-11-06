@@ -111,6 +111,8 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('locks the charge before changing its amount or description', async () => {
+    tx.memberCharge.findFirst.mockResolvedValue(charge);
+
     await service.update('org-1', 'charge-1', {
       description: 'Updated charge',
     });
@@ -123,6 +125,8 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('locks and re-reads the charge before waiving it', async () => {
+    tx.memberCharge.findFirst.mockResolvedValue(charge);
+
     await service.waive(
       'org-1',
       'charge-1',
@@ -161,6 +165,8 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('locks the charge before recalculating its allocation total', async () => {
+    tx.memberCharge.findFirst.mockResolvedValue(charge);
+
     await service.recalculate('org-1', 'charge-1');
 
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
