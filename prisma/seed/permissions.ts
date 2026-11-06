@@ -30,6 +30,7 @@ export const canonicalPermissions: PermissionDefinition[] = [
   // ============================================================
 
   permission('membership', 'members', 'view', 'View membership records.'),
+  permission('membership', 'members', 'view_sensitive', 'View sensitive personal member details.'),
   permission('membership', 'members', 'create', 'Create membership records.'),
   permission('membership', 'members', 'update', 'Update membership records.'),
 
