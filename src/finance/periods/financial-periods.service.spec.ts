@@ -102,6 +102,8 @@ describe('FinancialPeriodsService', () => {
   });
 
   it('closes only an open period under the organization lock', async () => {
+    tx.financialPeriod.findFirst.mockResolvedValue(period);
+
     await service.close('org-1', 'period-1');
 
     expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
