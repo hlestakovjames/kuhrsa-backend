@@ -570,6 +570,7 @@ model Notification {
 
   sentAt   DateTime?
   failedAt DateTime?
+  readAt   DateTime?
 
   errorMessage String?
   attempts     Int     @default(0)
@@ -586,6 +587,7 @@ model Notification {
   @@index([organizationId])
   @@index([memberId])
   @@index([userId])
+  @@index([organizationId, channel, readAt, createdAt])
   @@index([type])
   @@index([channel])
   @@index([status])
