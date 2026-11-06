@@ -46,9 +46,7 @@ describe('FinancialPeriodsService', () => {
       ),
     };
 
-    service = new FinancialPeriodsService(
-      prisma as unknown as PrismaService,
-    );
+    service = new FinancialPeriodsService(prisma as unknown as PrismaService);
   });
 
   it('locks the organization before checking and creating a financial period', async () => {
@@ -67,7 +65,8 @@ describe('FinancialPeriodsService', () => {
   });
 
   it('rejects an overlapping period after acquiring the organization lock', async () => {
-    tx.financialPeriod.findFirst
+    tx.financialPeriod.findFirst = jest
+      .fn()
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(period);
 
@@ -87,7 +86,8 @@ describe('FinancialPeriodsService', () => {
   });
 
   it('locks the organization before re-reading and updating a period', async () => {
-    tx.financialPeriod.findFirst
+    tx.financialPeriod.findFirst = jest
+      .fn()
       .mockResolvedValueOnce(period)
       .mockResolvedValueOnce(null);
 
@@ -102,7 +102,7 @@ describe('FinancialPeriodsService', () => {
   });
 
   it('closes only an open period under the organization lock', async () => {
-    tx.financialPeriod.findFirst.mockResolvedValue(period);
+    tx.financialPeriod.findFirst = jest.fn().mockResolvedValue(period);
 
     await service.close('org-1', 'period-1');
 
@@ -116,7 +116,7 @@ describe('FinancialPeriodsService', () => {
   });
 
   it('locks only a closed period under the organization lock', async () => {
-    tx.financialPeriod.findFirst.mockResolvedValue({
+    tx.financialPeriod.findFirst = jest.fn().mockResolvedValue({
       ...period,
       status: FinancialPeriodStatus.CLOSED,
     });
