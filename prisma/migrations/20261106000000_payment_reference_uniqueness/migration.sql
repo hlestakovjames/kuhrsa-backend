@@ -24,7 +24,12 @@ BEGIN
     RAISE EXCEPTION
       'Cannot enforce external payment reference uniqueness: duplicate non-null external references exist within an organization. Resolve duplicates before retrying this migration.';
   END IF;
-END $$;
+END $;
+
+-- Remove the former single-column indexes replaced by the
+-- organization-scoped composite unique indexes below.
+DROP INDEX IF EXISTS "Payment_reference_idx";
+DROP INDEX IF EXISTS "Payment_externalReference_idx";
 
 CREATE UNIQUE INDEX "Payment_organizationId_reference_key"
 ON "Payment"("organizationId", "reference");
