@@ -228,12 +228,14 @@ export class MpesaService implements PaymentProvider {
     );
 
     const successful = callback.ResultCode === 0;
-    let completedPayment: {
-      memberId: string;
-      organizationId: string;
-      amount: string;
-      currency: string;
-    } | null = null;
+    const completedPaymentRef: {
+      value?: {
+        memberId: string;
+        organizationId: string;
+        amount: string;
+        currency: string;
+      };
+    } = {};
 
     /*
      * A successful STK callback must contain the transaction
@@ -513,7 +515,7 @@ export class MpesaService implements PaymentProvider {
             return;
           }
 
-          completedPayment = {
+          completedPaymentRef.value = {
             memberId: payment.memberId,
             organizationId: payment.organizationId,
             amount: payment.amount.toString(),
@@ -657,6 +659,8 @@ export class MpesaService implements PaymentProvider {
         });
       },
     );
+
+    const completedPayment = completedPaymentRef.value;
 
     if (completedPayment && this.notificationsService) {
       try {
