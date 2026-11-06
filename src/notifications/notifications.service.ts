@@ -28,6 +28,7 @@ interface MemberNotificationRecord {
   organizationId: string;
   source: MemberSource;
   user: {
+    id: string;
     firstName: string | null;
     lastName: string | null;
   } | null;
@@ -78,6 +79,7 @@ export class NotificationsService {
         source: true,
         user: {
           select: {
+            id: true,
             firstName: true,
             lastName: true,
           },
@@ -110,7 +112,8 @@ export class NotificationsService {
         userId: data.userId,
         type: data.type,
         channel: data.channel,
-        status: NotificationStatus.PENDING,
+        status: data.status ?? NotificationStatus.PENDING,
+        sentAt: data.sentAt,
         recipient: data.recipient,
         subject: data.subject,
         templateKey: data.templateKey,
@@ -532,6 +535,59 @@ export class NotificationsService {
     });
 
     return this.sendSmsNotification(notification.id);
+  }
+
+  async createMemberInAppNotification(
+    memberId: string,
+    organizationId: string,
+    type: NotificationType,
+    subject: string,
+  ) {
+    const member = await this.getMember(memberId, organizationId);
+
+    return this.createNotification({
+      organizationId: member.organizationId,
+      memberId: member.id,
+      userId: member.user?.id,
+      type,
+      channel: NotificationChannel.IN_APP,
+      recipient: member.memberNumber,
+      subject,
+      templateKey: 'member-in-app',
+      status: NotificationStatus.SENT,
+      sentAt: new Date(),
+    });
+  }
+
+  async notifyMemberAccountActivated(
+    memberId: string,
+    organizationId: string,
+  ) {
+    return this.createMemberInAppNotification(
+      memberId,
+      organizationId,
+      NotificationType.ACCOUNT_ACTIVATED,
+      'Your KUHRSA account has been activated successfully.',
+    );
+  }
+
+  async notifyMemberPaymentConfirmed(
+    memberId: string,
+    organizationId: string,
+    amount: number | string,
+    currency: string,
+  ) {
+    const formattedAmount = new Intl.NumberFormat('en-KE', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(amount));
+
+    return this.createMemberInAppNotification(
+      memberId,
+      organizationId,
+      NotificationType.PAYMENT_CONFIRMATION,
+      `Payment received: ${currency} ${formattedAmount}.`,
+    );
   }
 
   private memberNotificationWhere(
