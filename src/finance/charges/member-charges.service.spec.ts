@@ -58,9 +58,7 @@ describe('MemberChargesService allocation coordination', () => {
       ),
     };
 
-    service = new MemberChargesService(
-      prisma as unknown as PrismaService,
-    );
+    service = new MemberChargesService(prisma as unknown as PrismaService);
   });
 
   it('locks the member before checking and creating a charge', async () => {
@@ -83,7 +81,7 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('does not create a charge when the member does not exist', async () => {
-    tx.member.findFirst.mockResolvedValue(null);
+    tx.member.findFirst = jest.fn().mockResolvedValue(null);
 
     await expect(
       service.create('org-1', {
@@ -97,7 +95,7 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('does not create a duplicate charge', async () => {
-    tx.memberCharge.findFirst.mockResolvedValue(charge);
+    tx.memberCharge.findFirst = jest.fn().mockResolvedValue(charge);
 
     await expect(
       service.create('org-1', {
@@ -111,7 +109,7 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('locks the charge before changing its amount or description', async () => {
-    tx.memberCharge.findFirst.mockResolvedValue(charge);
+    tx.memberCharge.findFirst = jest.fn().mockResolvedValue(charge);
 
     await service.update('org-1', 'charge-1', {
       description: 'Updated charge',
@@ -125,7 +123,7 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('locks and re-reads the charge before waiving it', async () => {
-    tx.memberCharge.findFirst.mockResolvedValue(charge);
+    tx.memberCharge.findFirst = jest.fn().mockResolvedValue(charge);
 
     await service.waive(
       'org-1',
@@ -148,16 +146,14 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('does not cancel a charge that has received allocations', async () => {
-    tx.memberCharge.findFirst.mockResolvedValue({
+    tx.memberCharge.findFirst = jest.fn().mockResolvedValue({
       ...charge,
       amountPaid: 25,
       balance: 75,
       status: ChargeStatus.PARTIALLY_PAID,
     });
 
-    await expect(
-      service.cancel('org-1', 'charge-1'),
-    ).rejects.toThrow(
+    await expect(service.cancel('org-1', 'charge-1')).rejects.toThrow(
       'A charge with payments cannot be cancelled.',
     );
 
@@ -165,7 +161,7 @@ describe('MemberChargesService allocation coordination', () => {
   });
 
   it('locks the charge before recalculating its allocation total', async () => {
-    tx.memberCharge.findFirst.mockResolvedValue(charge);
+    tx.memberCharge.findFirst = jest.fn().mockResolvedValue(charge);
 
     await service.recalculate('org-1', 'charge-1');
 
