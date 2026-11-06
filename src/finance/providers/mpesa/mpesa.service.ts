@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
+  Optional,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -10,6 +12,7 @@ import {
   Prisma,
 } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { NotificationsService } from '../../../notifications/notifications.service';
 import {
   PaymentProvider,
   PaymentProviderStkRequest,
@@ -25,8 +28,13 @@ import {
 export class MpesaService implements PaymentProvider {
   private accessToken: string | null = null;
   private accessTokenExpiresAt = 0;
+  private readonly logger = new Logger(MpesaService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly notificationsService?: NotificationsService,
+  ) {}
 
   async initiateStkPush(
     request: PaymentProviderStkRequest,
@@ -220,6 +228,14 @@ export class MpesaService implements PaymentProvider {
     );
 
     const successful = callback.ResultCode === 0;
+    const completedPaymentRef: {
+      value?: {
+        memberId: string;
+        organizationId: string;
+        amount: string;
+        currency: string;
+      };
+    } = {};
 
     /*
      * A successful STK callback must contain the transaction
@@ -499,6 +515,13 @@ export class MpesaService implements PaymentProvider {
             return;
           }
 
+          completedPaymentRef.value = {
+            memberId: payment.memberId,
+            organizationId: payment.organizationId,
+            amount: payment.amount.toString(),
+            currency: payment.currency,
+          };
+
           /*
            * Serialize allocations for the same member. Different
            * successful payments can complete concurrently, so lock
@@ -636,6 +659,25 @@ export class MpesaService implements PaymentProvider {
         });
       },
     );
+
+    const completedPayment = completedPaymentRef.value;
+
+    if (completedPayment && this.notificationsService) {
+      try {
+        await this.notificationsService.notifyMemberPaymentConfirmed(
+          completedPayment.memberId,
+          completedPayment.organizationId,
+          completedPayment.amount,
+          completedPayment.currency,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown notification error.';
+        this.logger.error(
+          `M-Pesa payment confirmation notification failed for member ${completedPayment.memberId}: ${message}`,
+        );
+      }
+    }
 
     return {
       received: true,

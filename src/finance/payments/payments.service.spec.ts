@@ -13,6 +13,7 @@ describe('PaymentsService status lifecycle', () => {
   let paymentFindFirst: jest.Mock;
   let paymentCreate: jest.Mock;
   let paymentUpdate: jest.Mock;
+  let notificationsService: { notifyMemberPaymentConfirmed: jest.Mock };
   let prisma: {
     member: { findFirst: jest.Mock };
     payment: {
@@ -45,6 +46,9 @@ describe('PaymentsService status lifecycle', () => {
     paymentFindFirst = jest.fn().mockResolvedValue(existingPayment);
     paymentCreate = jest.fn().mockResolvedValue(existingPayment);
     paymentUpdate = jest.fn().mockResolvedValue(existingPayment);
+    notificationsService = {
+      notifyMemberPaymentConfirmed: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
 
     const transactionClient = {
       $queryRaw: jest.fn().mockResolvedValue([]),
@@ -72,6 +76,7 @@ describe('PaymentsService status lifecycle', () => {
 
     service = new PaymentsService(
       prisma as unknown as PrismaService,
+      notificationsService as never,
     );
   });
 
@@ -168,6 +173,35 @@ describe('PaymentsService status lifecycle', () => {
         }),
       }),
     );
+  });
+
+  it('creates one in-app confirmation after a payment transitions to completed', async () => {
+    paymentUpdate.mockResolvedValue({
+      ...existingPayment,
+      status: PaymentStatus.COMPLETED,
+    });
+
+    await service.markCompleted('org-1', 'payment-1');
+
+    expect(notificationsService.notifyMemberPaymentConfirmed).toHaveBeenCalledTimes(1);
+    expect(notificationsService.notifyMemberPaymentConfirmed).toHaveBeenCalledWith(
+      'member-1',
+      'org-1',
+      '250',
+      'KES',
+    );
+  });
+
+  it('does not send another confirmation when a payment is already completed', async () => {
+    paymentFindFirst.mockResolvedValue({
+      ...existingPayment,
+      status: PaymentStatus.COMPLETED,
+    });
+
+    await service.markCompleted('org-1', 'payment-1');
+
+    expect(notificationsService.notifyMemberPaymentConfirmed).not.toHaveBeenCalled();
+    expect(paymentUpdate).not.toHaveBeenCalled();
   });
 
   it('does not manually complete an M-Pesa payment outside its verified callback', async () => {

@@ -28,6 +28,7 @@ interface MemberNotificationRecord {
   organizationId: string;
   source: MemberSource;
   user: {
+    id: string;
     firstName: string | null;
     lastName: string | null;
   } | null;
@@ -56,10 +57,14 @@ export class NotificationsService {
     return process.env.EMAIL_FROM?.trim() || 'KUHRSA <onboarding@resend.dev>';
   }
 
-  private async getMember(memberId: string): Promise<MemberNotificationRecord> {
-    const member = await this.prisma.member.findUnique({
+  private async getMember(
+    memberId: string,
+    organizationId?: string,
+  ): Promise<MemberNotificationRecord> {
+    const member = await this.prisma.member.findFirst({
       where: {
         id: memberId,
+        ...(organizationId ? { organizationId } : {}),
       },
       select: {
         id: true,
@@ -74,6 +79,7 @@ export class NotificationsService {
         source: true,
         user: {
           select: {
+            id: true,
             firstName: true,
             lastName: true,
           },
@@ -98,6 +104,8 @@ export class NotificationsService {
     subject?: string;
     templateKey?: string;
     metadata?: Prisma.InputJsonValue;
+    status?: NotificationStatus;
+    sentAt?: Date;
   }) {
     return this.prisma.notification.create({
       data: {
@@ -106,7 +114,8 @@ export class NotificationsService {
         userId: data.userId,
         type: data.type,
         channel: data.channel,
-        status: NotificationStatus.PENDING,
+        status: data.status ?? NotificationStatus.PENDING,
+        sentAt: data.sentAt,
         recipient: data.recipient,
         subject: data.subject,
         templateKey: data.templateKey,
@@ -410,8 +419,8 @@ export class NotificationsService {
     return this.sendNotification(notification.id);
   }
 
-  async sendMigrationWelcome(memberId: string) {
-    const member = await this.getMember(memberId);
+  async sendMigrationWelcome(memberId: string, organizationId?: string) {
+    const member = await this.getMember(memberId, organizationId);
 
     if (
       member.source !== MemberSource.MIGRATION_IMPORT &&
@@ -490,8 +499,8 @@ export class NotificationsService {
     return results;
   }
 
-  async sendMigrationWelcomeSmsOnly(memberId: string) {
-    const member = await this.getMember(memberId);
+  async sendMigrationWelcomeSmsOnly(memberId: string, organizationId?: string) {
+    const member = await this.getMember(memberId, organizationId);
 
     if (
       member.source !== MemberSource.MIGRATION_IMPORT &&
@@ -530,117 +539,126 @@ export class NotificationsService {
     return this.sendSmsNotification(notification.id);
   }
 
-  async findAll(query: NotificationQueryDto) {
+  async createMemberInAppNotification(
+    memberId: string,
+    organizationId: string,
+    type: NotificationType,
+    subject: string,
+  ) {
+    const member = await this.getMember(memberId, organizationId);
+
+    return this.createNotification({
+      organizationId: member.organizationId,
+      memberId: member.id,
+      userId: member.user?.id,
+      type,
+      channel: NotificationChannel.IN_APP,
+      recipient: member.memberNumber,
+      subject,
+      templateKey: 'member-in-app',
+      status: NotificationStatus.SENT,
+      sentAt: new Date(),
+    });
+  }
+
+  async notifyMemberAccountActivated(
+    memberId: string,
+    organizationId: string,
+  ) {
+    return this.createMemberInAppNotification(
+      memberId,
+      organizationId,
+      NotificationType.ACCOUNT_ACTIVATED,
+      'Your KUHRSA account has been activated successfully.',
+    );
+  }
+
+  async notifyMemberPaymentConfirmed(
+    memberId: string,
+    organizationId: string,
+    amount: number | string,
+    currency: string,
+  ) {
+    const formattedAmount = new Intl.NumberFormat('en-KE', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(amount));
+
+    return this.createMemberInAppNotification(
+      memberId,
+      organizationId,
+      NotificationType.PAYMENT_CONFIRMATION,
+      `Payment received: ${currency} ${formattedAmount}.`,
+    );
+  }
+
+  private memberNotificationWhere(
+    userId: string,
+    organizationId: string,
+    memberId?: string | null,
+  ): Prisma.NotificationWhereInput {
+    return {
+      organizationId,
+      channel: NotificationChannel.IN_APP,
+      OR: [
+        { userId },
+        ...(memberId ? [{ memberId }] : []),
+      ],
+    };
+  }
+
+  async findMine(
+    userId: string,
+    organizationId: string,
+    memberId: string | null | undefined,
+    query: NotificationQueryDto,
+  ) {
     const page = Math.max(Number(query.page) || 1, 1);
-
     const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
+    const where: Prisma.NotificationWhereInput = {
+      ...this.memberNotificationWhere(userId, organizationId, memberId),
+    };
 
-    const skip = (page - 1) * limit;
-
-    const where: Prisma.NotificationWhereInput = {};
-
-    if (query.type) {
-      where.type = query.type;
-    }
-
-    if (query.channel) {
-      where.channel = query.channel;
-    }
-
-    if (query.status) {
-      where.status = query.status;
-    }
-
-    if (query.memberId) {
-      where.memberId = query.memberId;
-    }
-
-    if (query.userId) {
-      where.userId = query.userId;
-    }
-
-    if (query.search?.trim()) {
-      const search = query.search.trim();
-
-      where.OR = [
-        {
-          recipient: {
-            contains: search,
-            mode: 'insensitive',
-          },
-        },
-        {
-          subject: {
-            contains: search,
-            mode: 'insensitive',
-          },
-        },
-        {
-          errorMessage: {
-            contains: search,
-            mode: 'insensitive',
-          },
-        },
-      ];
-    }
+    if (query.type) where.type = query.type;
 
     if (query.from || query.to) {
       const createdAt: Prisma.DateTimeFilter = {};
-
       if (query.from) {
         const from = new Date(query.from);
-
-        if (!Number.isNaN(from.getTime())) {
-          createdAt.gte = from;
-        }
+        if (!Number.isNaN(from.getTime())) createdAt.gte = from;
       }
-
       if (query.to) {
         const to = new Date(query.to);
-
-        if (!Number.isNaN(to.getTime())) {
-          createdAt.lte = to;
-        }
+        if (!Number.isNaN(to.getTime())) createdAt.lte = to;
       }
-
       where.createdAt = createdAt;
+    }
+
+    if (query.search?.trim()) {
+      where.subject = {
+        contains: query.search.trim(),
+        mode: 'insensitive',
+      };
     }
 
     const [notifications, total] = await Promise.all([
       this.prisma.notification.findMany({
         where,
-        orderBy: {
-          createdAt: 'desc',
-        },
-        skip,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
         take: limit,
-        include: {
-          member: {
-            select: {
-              id: true,
-              memberNumber: true,
-              user: {
-                select: {
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
+        select: {
+          id: true,
+          type: true,
+          channel: true,
+          status: true,
+          subject: true,
+          createdAt: true,
+          sentAt: true,
+          readAt: true,
         },
       }),
-
-      this.prisma.notification.count({
-        where,
-      }),
+      this.prisma.notification.count({ where }),
     ]);
 
     return {
@@ -654,11 +672,145 @@ export class NotificationsService {
     };
   }
 
-  async findOne(notificationId: string) {
-    const notification = await this.prisma.notification.findUnique({
+  async getMyUnreadCount(
+    userId: string,
+    organizationId: string,
+    memberId?: string | null,
+  ) {
+    const count = await this.prisma.notification.count({
       where: {
-        id: notificationId,
+        ...this.memberNotificationWhere(userId, organizationId, memberId),
+        readAt: null,
       },
+    });
+
+    return { unreadCount: count };
+  }
+
+  async markMineAsRead(
+    notificationId: string,
+    userId: string,
+    organizationId: string,
+    memberId?: string | null,
+  ) {
+    const where = {
+      id: notificationId,
+      ...this.memberNotificationWhere(userId, organizationId, memberId),
+    };
+
+    const result = await this.prisma.notification.updateMany({
+      where: { ...where, readAt: null },
+      data: { readAt: new Date() },
+    });
+
+    const notification = await this.prisma.notification.findFirst({
+      where,
+      select: { id: true, readAt: true },
+    });
+
+    if (!notification) {
+      throw new NotFoundException('Notification not found.');
+    }
+
+    return {
+      id: notification.id,
+      readAt: notification.readAt,
+      alreadyRead: result.count === 0,
+    };
+  }
+
+  async markAllMineAsRead(
+    userId: string,
+    organizationId: string,
+    memberId?: string | null,
+  ) {
+    const readAt = new Date();
+    const result = await this.prisma.notification.updateMany({
+      where: {
+        ...this.memberNotificationWhere(userId, organizationId, memberId),
+        readAt: null,
+      },
+      data: { readAt },
+    });
+
+    return { updatedCount: result.count, readAt };
+  }
+
+  async findAll(query: NotificationQueryDto, organizationId: string) {
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
+    const skip = (page - 1) * limit;
+    const where: Prisma.NotificationWhereInput = { organizationId };
+
+    if (query.type) where.type = query.type;
+    if (query.channel) where.channel = query.channel;
+    if (query.status) where.status = query.status;
+    if (query.memberId) where.memberId = query.memberId;
+    if (query.userId) where.userId = query.userId;
+
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      where.OR = [
+        { recipient: { contains: search, mode: 'insensitive' } },
+        { subject: { contains: search, mode: 'insensitive' } },
+        { errorMessage: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.from || query.to) {
+      const createdAt: Prisma.DateTimeFilter = {};
+      if (query.from) {
+        const from = new Date(query.from);
+        if (!Number.isNaN(from.getTime())) createdAt.gte = from;
+      }
+      if (query.to) {
+        const to = new Date(query.to);
+        if (!Number.isNaN(to.getTime())) createdAt.lte = to;
+      }
+      where.createdAt = createdAt;
+    }
+
+    const [notifications, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          member: {
+            select: {
+              id: true,
+              memberNumber: true,
+              user: { select: { firstName: true, lastName: true } },
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      }),
+      this.prisma.notification.count({ where }),
+    ]);
+
+    return {
+      data: notifications,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findOne(notificationId: string, organizationId: string) {
+    const notification = await this.prisma.notification.findFirst({
+      where: { id: notificationId, organizationId },
       include: {
         member: {
           select: {
@@ -666,12 +818,7 @@ export class NotificationsService {
             memberNumber: true,
             email: true,
             phone: true,
-            user: {
-              select: {
-                firstName: true,
-                lastName: true,
-              },
-            },
+            user: { select: { firstName: true, lastName: true } },
           },
         },
         user: {
@@ -683,12 +830,7 @@ export class NotificationsService {
             phone: true,
           },
         },
-        organization: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        organization: { select: { id: true, name: true } },
       },
     });
 
@@ -699,69 +841,73 @@ export class NotificationsService {
     return notification;
   }
 
-  async findByMember(memberId: string, query: NotificationQueryDto) {
-    const member = await this.prisma.member.findUnique({
-      where: {
-        id: memberId,
-      },
-      select: {
-        id: true,
-      },
+  async findByMember(
+    memberId: string,
+    organizationId: string,
+    query: NotificationQueryDto,
+  ) {
+    const member = await this.prisma.member.findFirst({
+      where: { id: memberId, organizationId },
+      select: { id: true },
     });
 
     if (!member) {
       throw new NotFoundException('Member not found.');
     }
 
-    return this.findAll({
-      ...query,
-      memberId,
-    });
+    return this.findAll({ ...query, memberId }, organizationId);
   }
 
-  async getSummary() {
+  async getSummary(organizationId: string) {
     const [total, sent, failed, pending, cancelled, email, sms, inApp] =
       await Promise.all([
-        this.prisma.notification.count(),
+        this.prisma.notification.count({ where: { organizationId } }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             status: NotificationStatus.SENT,
           },
         }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             status: NotificationStatus.FAILED,
           },
         }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             status: NotificationStatus.PENDING,
           },
         }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             status: NotificationStatus.CANCELLED,
           },
         }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             channel: NotificationChannel.EMAIL,
           },
         }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             channel: NotificationChannel.SMS,
           },
         }),
 
         this.prisma.notification.count({
           where: {
+            organizationId,
             channel: NotificationChannel.IN_APP,
           },
         }),
@@ -783,10 +929,11 @@ export class NotificationsService {
     };
   }
 
-  async retry(notificationId: string) {
-    const notification = await this.prisma.notification.findUnique({
+  async retry(notificationId: string, organizationId: string) {
+    const notification = await this.prisma.notification.findFirst({
       where: {
         id: notificationId,
+        organizationId,
       },
     });
 

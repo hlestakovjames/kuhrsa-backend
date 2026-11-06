@@ -2,7 +2,9 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 
 import {
@@ -11,13 +13,20 @@ import {
 } from '../../../generated/prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PaymentsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly notificationsService?: NotificationsService,
+  ) {}
 
   async findAll(
     organizationId: string,
@@ -380,7 +389,7 @@ export class PaymentsService {
     organizationId: string,
     id: string,
   ) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Payment"
@@ -407,7 +416,7 @@ export class PaymentsService {
       }
 
       if (payment.status === PaymentStatus.COMPLETED) {
-        return payment;
+        return { payment, transitioned: false };
       }
 
       if (payment.method === PaymentMethod.MPESA) {
@@ -427,7 +436,7 @@ export class PaymentsService {
         );
       }
 
-      return tx.payment.update({
+      const completedPayment = await tx.payment.update({
         where: {
           id: payment.id,
         },
@@ -442,6 +451,27 @@ export class PaymentsService {
           mpesaTransaction: true,
         },
       });
+
+      return { payment: completedPayment, transitioned: true };
     });
+
+    if (result.transitioned && this.notificationsService) {
+      try {
+        await this.notificationsService.notifyMemberPaymentConfirmed(
+          result.payment.memberId,
+          result.payment.organizationId,
+          result.payment.amount.toString(),
+          result.payment.currency,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown notification error.';
+        this.logger.error(
+          `Payment confirmation notification failed for payment ${result.payment.id}: ${message}`,
+        );
+      }
+    }
+
+    return result.payment;
   }
 }

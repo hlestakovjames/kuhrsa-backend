@@ -1,6 +1,7 @@
 import {
   ConflictException,
   ForbiddenException,
+  Logger,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -80,6 +81,8 @@ interface SafeMemberRecord {
 
 @Injectable()
 export class MembersService {
+  private readonly logger = new Logger(MembersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly memberNumberService: MemberNumberService,
@@ -1549,6 +1552,19 @@ export class MembersService {
         return updatedMember;
       },
     );
+
+    try {
+      await this.notificationsService.notifyMemberAccountActivated(
+        activated.id,
+        activated.organizationId,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown notification error.';
+      this.logger.error(
+        `Account activation notification failed for member ${activated.id}: ${message}`,
+      );
+    }
 
     return {
       message: 'Membership activation completed successfully.',
