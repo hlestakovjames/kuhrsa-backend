@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,6 +19,31 @@ import { CreateTermDto } from './dto/create-term.dto';
 import { UpdatePositionAssignmentDto } from './dto/update-position-assignment.dto';
 import { UpdatePositionDto } from './dto/update-position.dto';
 import { UpdateTermDto } from './dto/update-term.dto';
+
+const PROTECTED_GOVERNANCE_ROLE_CODES = new Set([
+  'SYSTEM_OWNER',
+  'SUPER_ADMINISTRATOR',
+  'ADMINISTRATOR',
+]);
+
+const PROTECTED_GOVERNANCE_PERMISSION_CODES = new Set([
+  'governance.assignments.create',
+  'governance.assignments.update',
+  'governance.assignments.activate',
+  'governance.assignments.end',
+  'governance.assignments.revoke',
+  'governance.positions.manage',
+  'governance.terms.manage',
+]);
+
+function isSafeGovernanceRolePermission(code: unknown): code is string {
+  return (
+    typeof code === 'string' &&
+    !code.startsWith('users.') &&
+    !code.startsWith('system.') &&
+    !PROTECTED_GOVERNANCE_PERMISSION_CODES.has(code)
+  );
+}
 
 @Injectable()
 export class GovernanceService {
@@ -168,6 +194,7 @@ export class GovernanceService {
                 id: true,
                 code: true,
                 name: true,
+                isSystemRole: true,
                 rolePermissions: {
                   select: {
                     permission: {
@@ -215,15 +242,22 @@ export class GovernanceService {
       for (const assignmentRole of assignment.roles) {
         const role = assignmentRole.role;
 
-        if (!effectiveRoles.has(role.id)) {
-          effectiveRoles.set(role.id, {
-            id: role.id,
-            code: role.code,
-            name: role.name,
-            startsAt: assignment.startsAt,
-            endsAt: assignment.endsAt,
-          });
+        // Governance appointments must never surface administrative roles,
+        // even if a role was changed after the appointment was created.
+        if (
+          PROTECTED_GOVERNANCE_ROLE_CODES.has(role.code) ||
+          effectiveRoles.has(role.id)
+        ) {
+          continue;
         }
+
+        effectiveRoles.set(role.id, {
+          id: role.id,
+          code: role.code,
+          name: role.name,
+          startsAt: assignment.startsAt,
+          endsAt: assignment.endsAt,
+        });
       }
     }
 
@@ -233,7 +267,14 @@ export class GovernanceService {
       for (const rolePermission of userRole.role.rolePermissions) {
         const code = rolePermission.permission?.code;
 
-        if (code) {
+        // Preserve protected permissions only for genuine seeded system
+        // roles. Legacy custom-role grants are filtered just like they are
+        // when the authenticated user is loaded by UsersService.
+        if (
+          code &&
+          (userRole.role.isSystemRole ||
+            isSafeGovernanceRolePermission(code))
+        ) {
           effectivePermissions.add(code);
         }
       }
@@ -241,10 +282,16 @@ export class GovernanceService {
 
     for (const assignment of assignments) {
       for (const assignmentRole of assignment.roles) {
-        for (const rolePermission of assignmentRole.role.rolePermissions) {
+        const role = assignmentRole.role;
+
+        if (PROTECTED_GOVERNANCE_ROLE_CODES.has(role.code)) {
+          continue;
+        }
+
+        for (const rolePermission of role.rolePermissions) {
           const code = rolePermission.permission?.code;
 
-          if (code) {
+          if (isSafeGovernanceRolePermission(code)) {
             effectivePermissions.add(code);
           }
         }
@@ -952,23 +999,7 @@ export class GovernanceService {
     const roleIds = [...new Set(dto.roleIds ?? [])];
 
     if (roleIds.length > 0) {
-      const roles = await this.prisma.role.findMany({
-        where: {
-          organizationId,
-          id: {
-            in: roleIds,
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      if (roles.length !== roleIds.length) {
-        throw new NotFoundException(
-          'One or more management roles were not found in this organization.',
-        );
-      }
+      await this.validatePositionAssignmentRoles(organizationId, roleIds);
     }
 
     const conflictingPositionAssignment =
@@ -1196,23 +1227,7 @@ export class GovernanceService {
     if (dto.roleIds !== undefined) {
       const roleIds = [...new Set(dto.roleIds)];
 
-      const roles = await this.prisma.role.findMany({
-        where: {
-          organizationId,
-          id: {
-            in: roleIds,
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      if (roles.length !== roleIds.length) {
-        throw new NotFoundException(
-          'One or more management roles were not found in this organization.',
-        );
-      }
+      await this.validatePositionAssignmentRoles(organizationId, roleIds);
 
       data.roles = {
         deleteMany: {},
@@ -1536,4 +1551,73 @@ export class GovernanceService {
       return updatedAssignment;
     });
   }
+  private async validatePositionAssignmentRoles(
+    organizationId: string,
+    roleIds: string[],
+  ) {
+    if (roleIds.length === 0) {
+      return;
+    }
+
+    const roles = await this.prisma.role.findMany({
+      where: {
+        organizationId,
+        id: { in: roleIds },
+      },
+      select: {
+        id: true,
+        code: true,
+        rolePermissions: {
+          select: {
+            permission: {
+              select: { code: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (roles.length !== roleIds.length) {
+      throw new NotFoundException(
+        'One or more management roles were not found in this organization.',
+      );
+    }
+
+    const protectedRoleCodes = new Set([
+      'SYSTEM_OWNER',
+      'SUPER_ADMINISTRATOR',
+      'ADMINISTRATOR',
+    ]);
+    const protectedPermissionCodes = new Set([
+      'governance.assignments.create',
+      'governance.assignments.update',
+      'governance.assignments.activate',
+      'governance.assignments.end',
+      'governance.assignments.revoke',
+      'governance.positions.manage',
+      'governance.terms.manage',
+    ]);
+
+    const privilegedRole = roles.find(
+      (role) =>
+        protectedRoleCodes.has(role.code) ||
+        role.rolePermissions.some(({ permission }) => {
+          const code = permission.code;
+          return (
+            code.startsWith('users.') ||
+            code.startsWith('system.') ||
+            protectedPermissionCodes.has(code)
+          );
+        }),
+    );
+
+    if (privilegedRole) {
+      throw new ForbiddenException({
+        code: 'PRIVILEGED_ROLE_NOT_ALLOWED_FOR_GOVERNANCE_ASSIGNMENT',
+        message:
+          'Administrative and access-management roles must be assigned through dedicated role management, not governance position assignments.',
+      });
+    }
+  }
+
 }

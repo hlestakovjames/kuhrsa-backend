@@ -107,7 +107,10 @@ describe('MpesaService callback processing', () => {
         data: expect.objectContaining({ status: 'COMPLETED' }),
       }),
     );
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.memberCharge.findMany.mock.invocationCallOrder[0],
+    );
     expect(tx.memberCharge.findMany).toHaveBeenCalledTimes(1);
     expect(tx.paymentAllocation.create).toHaveBeenCalledTimes(2);
     expect(tx.paymentAllocation.create).toHaveBeenNthCalledWith(1, {

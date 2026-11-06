@@ -513,6 +513,19 @@ export class MpesaService implements PaymentProvider {
             FOR UPDATE
           `;
 
+          // Lock balance-bearing charges in deterministic order before
+          // reading balances or creating allocations.
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "MemberCharge"
+            WHERE "organizationId" = ${payment.organizationId}
+              AND "memberId" = ${payment.memberId}
+              AND "balance" > 0
+              AND "status" NOT IN ('WAIVED', 'CANCELLED')
+            ORDER BY "dueDate" ASC NULLS LAST, "createdAt" ASC, "id" ASC
+            FOR UPDATE
+          `;
+
           let unallocated = new Prisma.Decimal(payment.amount);
           const charges = await tx.memberCharge.findMany({
             where: {

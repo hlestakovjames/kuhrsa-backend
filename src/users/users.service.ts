@@ -367,23 +367,6 @@ export class UsersService {
       throw new NotFoundException('Default MEMBER role is not configured.');
     }
 
-    let roleToAssign = memberRole;
-
-    if (dto.roleId) {
-      const requestedRole = await this.prisma.role.findFirst({
-        where: {
-          id: dto.roleId,
-          organizationId,
-        },
-      });
-
-      if (!requestedRole) {
-        throw new NotFoundException('Selected role was not found.');
-      }
-
-      roleToAssign = requestedRole;
-    }
-
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     const user = await this.prisma.$transaction(async (tx) => {
@@ -410,7 +393,7 @@ export class UsersService {
       await tx.userRole.create({
         data: {
           userId: createdUser.id,
-          roleId: roleToAssign.id,
+          roleId: memberRole.id,
           assignedBy: actorUserId,
         },
       });
@@ -429,9 +412,9 @@ export class UsersService {
             email: createdUser.email,
             status: createdUser.status,
             role: {
-              id: roleToAssign.id,
-              name: roleToAssign.name,
-              code: roleToAssign.code,
+              id: memberRole.id,
+              name: memberRole.name,
+              code: memberRole.code,
             },
           },
         },
@@ -647,15 +630,105 @@ export class UsersService {
       ? (user as any).member.positionAssignments
       : [];
 
-    const effectiveRoles = [...directRoles];
+    const reservedBuiltInRoleCodes = new Set([
+      'SYSTEM_OWNER',
+      'SUPER_ADMINISTRATOR',
+      'ADMINISTRATOR',
+      'EXECUTIVE',
+      'MEMBER',
+    ]);
+    const protectedCustomRolePermissionCodes = new Set([
+      'governance.assignments.create',
+      'governance.assignments.update',
+      'governance.assignments.activate',
+      'governance.assignments.end',
+      'governance.assignments.revoke',
+      'governance.positions.manage',
+      'governance.terms.manage',
+    ]);
+
+    // Custom roles may grant ordinary module permissions, but they must not
+    // confer user/access administration, system administration, or protected
+    // governance mutation capabilities. Keep built-in system roles intact.
+    const effectiveRoles = directRoles
+      .filter((userRole: any) => {
+        const role = userRole.role;
+
+        // A reserved code is trusted only when it belongs to a genuine
+        // seeded system role. Never let a malformed custom role inherit the
+        // built-in role's identity or bypass custom-role permission filtering.
+        return !(
+          role &&
+          reservedBuiltInRoleCodes.has(role.code) &&
+          role.isSystemRole !== true
+        );
+      })
+      .map((userRole: any) => {
+        const role = userRole.role;
+
+        if (!role || role.isSystemRole) {
+          return userRole;
+        }
+
+        return {
+          ...userRole,
+        role: {
+          ...role,
+          rolePermissions: (role.rolePermissions ?? []).filter(
+            (rolePermission: any) => {
+              const code = rolePermission.permission?.code;
+              return (
+                typeof code === 'string' &&
+                !code.startsWith('users.') &&
+                !code.startsWith('system.') &&
+                !protectedCustomRolePermissionCodes.has(code)
+              );
+            },
+          ),
+          },
+        };
+      });
+
+    const protectedGovernanceRoleCodes = new Set([
+      'SYSTEM_OWNER',
+      'SUPER_ADMINISTRATOR',
+      'ADMINISTRATOR',
+    ]);
+    const protectedGovernancePermissionCodes = new Set([
+      'governance.assignments.create',
+      'governance.assignments.update',
+      'governance.assignments.activate',
+      'governance.assignments.end',
+      'governance.assignments.revoke',
+      'governance.positions.manage',
+      'governance.terms.manage',
+    ]);
 
     for (const assignment of positionAssignments) {
       for (const assignmentRole of assignment.roles ?? []) {
         const role = assignmentRole.role;
 
-        if (!role) {
+        if (!role || protectedGovernanceRoleCodes.has(role.code)) {
           continue;
         }
+
+        // Governance-derived roles must never confer administrative or
+        // access-management privileges, even if a custom role is edited
+        // after the position assignment was created.
+        const safeRole = {
+          ...role,
+          rolePermissions: (role.rolePermissions ?? []).filter(
+            (rolePermission: any) => {
+              const code = rolePermission.permission?.code;
+              return (
+                typeof code === 'string' &&
+                !code.startsWith('users.') &&
+                !code.startsWith('system.') &&
+                !protectedGovernancePermissionCodes.has(code)
+              );
+            },
+          ),
+        };
 
         const alreadyIncluded = effectiveRoles.some(
           (userRole: any) => userRole.role?.id === role.id,
@@ -671,7 +744,7 @@ export class UsersService {
             startsAt: assignment.startsAt,
             endsAt: assignment.endsAt,
             revokedAt: null,
-            role,
+            role: safeRole,
           });
         }
       }

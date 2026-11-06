@@ -41,10 +41,12 @@ export class FeeSchedulesController {
   @Permissions('finance.fees.view')
   findOne(
     @Request() req: AuthenticatedRequest,
+    @Param('feeDefinitionId') feeDefinitionId: string,
     @Param('id') id: string,
   ) {
     return this.feeSchedulesService.findOne(
       req.user.organizationId,
+      feeDefinitionId,
       id,
     );
   }
@@ -67,11 +69,13 @@ export class FeeSchedulesController {
   @Permissions('finance.fees.manage')
   update(
     @Request() req: AuthenticatedRequest,
+    @Param('feeDefinitionId') feeDefinitionId: string,
     @Param('id') id: string,
     @Body() dto: UpdateFeeScheduleDto,
   ) {
     return this.feeSchedulesService.update(
       req.user.organizationId,
+      feeDefinitionId,
       id,
       dto,
     );

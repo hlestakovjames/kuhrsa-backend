@@ -10,7 +10,6 @@ import {
 
 import {
   PaymentMethod,
-  PaymentStatus,
 } from '../../../../generated/prisma/client';
 
 export class CreatePaymentDto {
@@ -29,10 +28,6 @@ export class CreatePaymentDto {
 
   @IsEnum(PaymentMethod)
   method!: PaymentMethod;
-
-  @IsOptional()
-  @IsEnum(PaymentStatus)
-  status?: PaymentStatus;
 
   @IsOptional()
   @IsString()

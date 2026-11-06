@@ -14,6 +14,7 @@ const GOVERNANCE_ROLE_CODES = {
   ADMINISTRATOR: 'ADMINISTRATOR',
   EXECUTIVE: 'EXECUTIVE',
   MEMBER: 'MEMBER',
+  SYSTEM_OWNER: 'SYSTEM_OWNER',
 } as const;
 
 const ROLE_LIMITS = {
@@ -136,6 +137,12 @@ export class RolesService {
   ) {
     const code = dto.code.trim().toUpperCase();
 
+    if (Object.values(GOVERNANCE_ROLE_CODES).includes(code as any)) {
+      throw new ForbiddenException(
+        `${code} is a reserved built-in role code and cannot be created as a custom role.`,
+      );
+    }
+
     const existingRole = await this.prisma.role.findUnique({
       where: {
         organizationId_code: {
@@ -240,7 +247,6 @@ export class RolesService {
 
       return role;
     });
-
     return this.findOne(updatedRole.id, organizationId);
   }
 
@@ -274,9 +280,34 @@ export class RolesService {
       throw new NotFoundException('User not found.');
     }
 
-    if (user.isSystemOwner) {
+    if (
+      role.code === GOVERNANCE_ROLE_CODES.SYSTEM_OWNER ||
+      user.isSystemOwner
+    ) {
       throw new ForbiddenException(
-        'The System Owner role assignments cannot be changed through ordinary role management.',
+        'System Owner is a protected platform identity and cannot be assigned through ordinary role management.',
+      );
+    }
+
+    if (
+      Object.values(GOVERNANCE_ROLE_CODES).includes(role.code as any) &&
+      role.isSystemRole !== true
+    ) {
+      throw new ForbiddenException(
+        `${role.code} is reserved for its seeded system role and cannot be assigned from a custom role record.`,
+      );
+    }
+
+    if (
+      role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR ||
+      role.code === GOVERNANCE_ROLE_CODES.ADMINISTRATOR
+    ) {
+      await this.requirePrivilegedAppointmentPermission(
+        actorUserId,
+        organizationId,
+        role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR
+          ? 'system.super_administrators.manage'
+          : 'system.administrators.manage',
       );
     }
 
@@ -350,9 +381,34 @@ export class RolesService {
       throw new NotFoundException('User not found.');
     }
 
-    if (user.isSystemOwner) {
+    if (
+      user.isSystemOwner ||
+      role.code === GOVERNANCE_ROLE_CODES.SYSTEM_OWNER
+    ) {
       throw new ForbiddenException(
-        'The System Owner role assignments cannot be changed through ordinary role management.',
+        'System Owner identity and assignments cannot be changed through ordinary role management.',
+      );
+    }
+
+    if (
+      Object.values(GOVERNANCE_ROLE_CODES).includes(role.code as any) &&
+      role.isSystemRole !== true
+    ) {
+      throw new ForbiddenException(
+        `${role.code} is reserved for its seeded system role and cannot be changed through ordinary role management.`,
+      );
+    }
+
+    if (
+      role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR ||
+      role.code === GOVERNANCE_ROLE_CODES.ADMINISTRATOR
+    ) {
+      await this.requirePrivilegedAppointmentPermission(
+        actorUserId,
+        organizationId,
+        role.code === GOVERNANCE_ROLE_CODES.SUPER_ADMINISTRATOR
+          ? 'system.super_administrators.manage'
+          : 'system.administrators.manage',
       );
     }
 
@@ -362,38 +418,48 @@ export class RolesService {
       );
     }
 
-    const assignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId,
-          roleId,
-        },
-      },
-    });
-
-    if (!assignment) {
-      throw new NotFoundException(
-        'This user does not have the specified role.',
-      );
-    }
-
-    if (assignment.revokedAt) {
-      throw new ConflictException(
-        'This role assignment has already been revoked.',
-      );
-    }
-
     const revokedAt = new Date();
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.userRole.update({
+      const assignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId,
+            roleId,
+          },
+        },
+      });
+
+      if (!assignment) {
+        throw new NotFoundException(
+          'This user does not have the specified role.',
+        );
+      }
+
+      if (assignment.revokedAt) {
+        throw new ConflictException(
+          'This role assignment has already been revoked.',
+        );
+      }
+
+      // The conditional update prevents duplicate revocation and avoids
+      // revoking a term that was reappointed after it was read.
+      const updateResult = await tx.userRole.updateMany({
         where: {
           id: assignment.id,
+          revokedAt: null,
+          assignedAt: assignment.assignedAt,
         },
         data: {
           revokedAt,
         },
       });
+
+      if (updateResult.count !== 1) {
+        throw new ConflictException(
+          'This role assignment changed before it could be revoked. Refresh and try again.',
+        );
+      }
 
       await tx.auditLog.create({
         data: {
@@ -451,42 +517,54 @@ export class RolesService {
       );
     }
 
-    const activeCount = await this.countActiveAssignments(
-      role.id,
-      organizationId,
-      now,
-    );
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOrganizationRoleAssignments(tx, organizationId);
 
-    const existingAssignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId: user.id,
-          roleId: role.id,
+      const existingAssignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
         },
-      },
+      });
+
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, null)) {
+        throw new ConflictException(
+          'This user already has an active Super Administrator appointment.',
+        );
+      }
+
+      // Super Administrator appointments are indefinite. Count both current
+      // and future non-revoked appointments so future starts reserve a place.
+      const appointmentCount = await tx.userRole.count({
+        where: {
+          roleId: role.id,
+          user: { organizationId },
+          revokedAt: null,
+          OR: [
+            { endsAt: null },
+            { endsAt: { gt: startsAt } },
+          ],
+        },
+      });
+
+      if (appointmentCount >= ROLE_LIMITS.SUPER_ADMINISTRATOR) {
+        throw new ConflictException(
+          `The organization can have a maximum of ${ROLE_LIMITS.SUPER_ADMINISTRATOR} Super Administrator appointments.`,
+        );
+      }
+      await this.upsertAppointmentInTransaction(
+        tx,
+        existingAssignment,
+        role.id,
+        user.id,
+        organizationId,
+        actorUserId,
+        startsAt,
+        null,
+      );
     });
-
-    if (existingAssignment && !existingAssignment.revokedAt) {
-      throw new ConflictException(
-        'This user already has an active Super Administrator appointment.',
-      );
-    }
-
-    if (activeCount >= ROLE_LIMITS.SUPER_ADMINISTRATOR) {
-      throw new ConflictException(
-        `The organization can have a maximum of ${ROLE_LIMITS.SUPER_ADMINISTRATOR} active Super Administrators.`,
-      );
-    }
-
-    await this.upsertAppointment(
-      existingAssignment,
-      role.id,
-      user.id,
-      organizationId,
-      actorUserId,
-      startsAt,
-      null,
-    );
 
     return this.findOne(role.id, organizationId);
   }
@@ -513,42 +591,55 @@ export class RolesService {
 
     this.validateAppointmentWindow(startsAt, endsAt, now);
 
-    const activeCount = await this.countActiveAssignments(
-      role.id,
-      organizationId,
-      now,
-    );
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOrganizationRoleAssignments(tx, organizationId);
 
-    const existingAssignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId: user.id,
-          roleId: role.id,
+      const existingAssignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
         },
-      },
+      });
+
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
+        throw new ConflictException(
+          'This user already has an active Administrator appointment.',
+        );
+      }
+
+      // Count appointments whose date windows overlap this proposed term.
+      const appointmentCount = await tx.userRole.count({
+        where: {
+          roleId: role.id,
+          user: { organizationId },
+          revokedAt: null,
+          startsAt: { lt: endsAt },
+          OR: [
+            { endsAt: null },
+            { endsAt: { gt: startsAt } },
+          ],
+        },
+      });
+
+      if (appointmentCount >= ROLE_LIMITS.ADMINISTRATOR) {
+        throw new ConflictException(
+          `The organization can have a maximum of ${ROLE_LIMITS.ADMINISTRATOR} overlapping Administrator appointments.`,
+        );
+      }
+
+      await this.upsertAppointmentInTransaction(
+        tx,
+        existingAssignment,
+        role.id,
+        user.id,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
+      );
     });
-
-    if (existingAssignment && !existingAssignment.revokedAt) {
-      throw new ConflictException(
-        'This user already has an active Administrator appointment.',
-      );
-    }
-
-    if (activeCount >= ROLE_LIMITS.ADMINISTRATOR) {
-      throw new ConflictException(
-        `The organization can have a maximum of ${ROLE_LIMITS.ADMINISTRATOR} active Administrators.`,
-      );
-    }
-
-    await this.upsertAppointment(
-      existingAssignment,
-      role.id,
-      user.id,
-      organizationId,
-      actorUserId,
-      startsAt,
-      endsAt,
-    );
 
     return this.findOne(role.id, organizationId);
   }
@@ -570,35 +661,39 @@ export class RolesService {
     }
 
     const startsAt = this.parseDate(startsAtInput, 'startsAt');
-
     const endsAt = this.parseDate(endsAtInput, 'endsAt');
 
     this.validateAppointmentWindow(startsAt, endsAt, now);
 
-    const existingAssignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId: user.id,
-          roleId: role.id,
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOrganizationRoleAssignments(tx, organizationId);
+
+      const existingAssignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
         },
-      },
-    });
+      });
 
-    if (existingAssignment && !existingAssignment.revokedAt) {
-      throw new ConflictException(
-        'This user already has an active Executive appointment.',
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
+        throw new ConflictException(
+          'This user already has an active Executive appointment.',
+        );
+      }
+
+      await this.upsertAppointmentInTransaction(
+        tx,
+        existingAssignment,
+        role.id,
+        user.id,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
       );
-    }
-
-    await this.upsertAppointment(
-      existingAssignment,
-      role.id,
-      user.id,
-      organizationId,
-      actorUserId,
-      startsAt,
-      endsAt,
-    );
+    });
 
     return this.findOne(role.id, organizationId);
   }
@@ -623,33 +718,39 @@ export class RolesService {
       throw new ConflictException('endsAt must be later than startsAt.');
     }
 
-    const existingAssignment = await this.prisma.userRole.findUnique({
-      where: {
-        userId_roleId: {
-          userId: user.id,
-          roleId: role.id,
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOrganizationRoleAssignments(tx, organizationId);
+
+      const existingAssignment = await tx.userRole.findUnique({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
         },
-      },
+      });
+
+      if (this.hasOverlappingAppointment(existingAssignment, startsAt, endsAt)) {
+        throw new ConflictException('This user already has this role.');
+      }
+
+      await this.upsertAppointmentInTransaction(
+        tx,
+        existingAssignment,
+        role.id,
+        user.id,
+        organizationId,
+        actorUserId,
+        startsAt,
+        endsAt,
+      );
     });
-
-    if (existingAssignment && !existingAssignment.revokedAt) {
-      throw new ConflictException('This user already has this role.');
-    }
-
-    await this.upsertAppointment(
-      existingAssignment,
-      role.id,
-      user.id,
-      organizationId,
-      actorUserId,
-      startsAt,
-      endsAt,
-    );
 
     return this.findOne(role.id, organizationId);
   }
 
-  private async upsertAppointment(
+  private async upsertAppointmentInTransaction(
+    tx: Prisma.TransactionClient,
     existingAssignment: UserRole | null,
     roleId: string,
     userId: string,
@@ -658,78 +759,120 @@ export class RolesService {
     startsAt: Date,
     endsAt: Date | null,
   ) {
-    await this.prisma.$transaction(async (tx) => {
-      let assignment: UserRole;
+    let assignment: UserRole;
 
-      if (existingAssignment) {
-        assignment = await tx.userRole.update({
-          where: {
-            id: existingAssignment.id,
-          },
-          data: {
-            startsAt,
-            endsAt,
-            revokedAt: null,
-            assignedAt: new Date(),
-            assignedBy: actorUserId,
-          },
-        });
-      } else {
-        assignment = await tx.userRole.create({
-          data: {
-            userId,
-            roleId,
-            assignedBy: actorUserId,
-            startsAt,
-            endsAt,
-          },
-        });
-      }
-
-      await tx.auditLog.create({
+    if (existingAssignment) {
+      assignment = await tx.userRole.update({
+        where: {
+          id: existingAssignment.id,
+        },
         data: {
-          organizationId,
-          actorUserId,
-          action: 'ROLE_CHANGE',
-          entityType: 'UserRole',
-          entityId: assignment.id,
-          oldValue: existingAssignment
-            ? {
-                userId,
-                roleId,
-                startsAt: existingAssignment.startsAt,
-                endsAt: existingAssignment.endsAt,
-                revokedAt: existingAssignment.revokedAt,
-                action: 'REAPPOINT',
-              }
-            : undefined,
-          newValue: {
-            userId,
-            roleId,
-            startsAt,
-            endsAt,
-            revokedAt: null,
-            action: existingAssignment ? 'REAPPOINT' : 'ASSIGN',
-          },
+          startsAt,
+          endsAt,
+          revokedAt: null,
+          assignedAt: new Date(),
+          assignedBy: actorUserId,
         },
       });
+    } else {
+      assignment = await tx.userRole.create({
+        data: {
+          userId,
+          roleId,
+          assignedBy: actorUserId,
+          startsAt,
+          endsAt,
+        },
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        organizationId,
+        actorUserId,
+        action: 'ROLE_CHANGE',
+        entityType: 'UserRole',
+        entityId: assignment.id,
+        oldValue: existingAssignment
+          ? {
+              userId,
+              roleId,
+              startsAt: existingAssignment.startsAt,
+              endsAt: existingAssignment.endsAt,
+              revokedAt: existingAssignment.revokedAt,
+              action: 'REAPPOINT',
+            }
+          : undefined,
+        newValue: {
+          userId,
+          roleId,
+          startsAt,
+          endsAt,
+          revokedAt: null,
+          action: existingAssignment ? 'REAPPOINT' : 'ASSIGN',
+        },
+      },
     });
   }
 
-  private async countActiveAssignments(
-    roleId: string,
+  private async requirePrivilegedAppointmentPermission(
+    actorUserId: string,
     organizationId: string,
-    now: Date,
+    permissionCode: string,
   ) {
-    return this.prisma.userRole.count({
+    const now = new Date();
+    const actor = await this.prisma.user.findFirst({
       where: {
-        roleId,
-        user: {
-          organizationId,
+        id: actorUserId,
+        organizationId,
+        status: 'ACTIVE',
+      },
+      select: {
+        isSystemOwner: true,
+        userRoles: {
+          where: {
+            revokedAt: null,
+            startsAt: { lte: now },
+            OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+          },
+          select: {
+            role: {
+              select: {
+                rolePermissions: {
+                  where: { permission: { code: permissionCode } },
+                  select: { id: true },
+                },
+              },
+            },
+          },
         },
-        ...this.activeAssignmentWhere(now),
       },
     });
+
+    const authorized =
+      actor?.isSystemOwner === true ||
+      actor?.userRoles.some(
+        (assignment) => assignment.role.rolePermissions.length > 0,
+      ) === true;
+
+    if (!authorized) {
+      throw new ForbiddenException(
+        `The ${permissionCode} permission is required for this privileged appointment change.`,
+      );
+    }
+  }
+
+  private async lockOrganizationRoleAssignments(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ) {
+    // Serialize capped-role checks per organization on PostgreSQL.
+    await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "Organization"
+      WHERE "id" = ${organizationId}
+      FOR UPDATE
+    `;
   }
 
   private activeAssignmentWhere(now: Date): Prisma.UserRoleWhereInput {
@@ -749,6 +892,23 @@ export class RolesService {
         },
       ],
     };
+  }
+
+  private hasOverlappingAppointment(
+    assignment: UserRole | null,
+    startsAt: Date,
+    endsAt: Date | null,
+  ) {
+    if (!assignment || assignment.revokedAt) {
+      return false;
+    }
+
+    const startsBeforeRequestedEnd =
+      endsAt === null || assignment.startsAt < endsAt;
+    const endsAfterRequestedStart =
+      assignment.endsAt === null || assignment.endsAt > startsAt;
+
+    return startsBeforeRequestedEnd && endsAfterRequestedStart;
   }
 
   private isAssignmentActive(assignment: UserRole, now: Date) {

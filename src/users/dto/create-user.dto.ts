@@ -1,9 +1,7 @@
 import {
   IsEmail,
   IsNotEmpty,
-  IsOptional,
   IsString,
-  IsUUID,
   MinLength,
 } from 'class-validator';
 
@@ -23,8 +21,4 @@ export class CreateUserDto {
   @IsNotEmpty()
   @MinLength(8)
   password!: string;
-
-  @IsOptional()
-  @IsUUID()
-  roleId?: string;
 }

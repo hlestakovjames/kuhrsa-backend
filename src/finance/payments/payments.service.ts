@@ -147,35 +147,37 @@ export class PaymentsService {
       }
     }
 
-    const status =
-      dto.status ?? PaymentStatus.COMPLETED;
+    try {
+      return await this.prisma.payment.create({
+        data: {
+          organizationId,
+          memberId: dto.memberId,
+          amount: dto.amount,
+          currency:
+            dto.currency?.trim().toUpperCase() ||
+            'KES',
+          method: dto.method,
+          status: PaymentStatus.PENDING,
+          reference: reference ?? null,
+          externalReference:
+            externalReference ?? null,
+          description:
+            dto.description?.trim() || null,
+          paidAt: null,
+        },
+        include: {
+          member: true,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(
+          'A payment with this reference or external reference already exists.',
+        );
+      }
 
-    const paidAt =
-      status === PaymentStatus.COMPLETED
-        ? new Date()
-        : null;
-
-    return this.prisma.payment.create({
-      data: {
-        organizationId,
-        memberId: dto.memberId,
-        amount: dto.amount,
-        currency:
-          dto.currency?.trim().toUpperCase() ||
-          'KES',
-        method: dto.method,
-        status,
-        reference: reference ?? null,
-        externalReference:
-          externalReference ?? null,
-        description:
-          dto.description?.trim() || null,
-        paidAt,
-      },
-      include: {
-        member: true,
-      },
-    });
+      throw error;
+    }
   }
 
   async update(
@@ -251,91 +253,126 @@ export class PaymentsService {
       }
     }
 
-    const status =
-      dto.status ?? payment.status;
+    try {
+      return await this.prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          ...(dto.reference !== undefined && {
+            reference,
+          }),
+          ...(dto.externalReference !== undefined && {
+            externalReference,
+          }),
+          ...(dto.description !== undefined && {
+            description:
+              dto.description.trim() || null,
+          }),
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(
+          'A payment with this reference or external reference already exists.',
+        );
+      }
 
-    let paidAt = payment.paidAt;
-
-    if (
-      status === PaymentStatus.COMPLETED &&
-      payment.status !== PaymentStatus.COMPLETED
-    ) {
-      paidAt = new Date();
+      throw error;
     }
+  }
 
-    if (
-      status !== PaymentStatus.COMPLETED &&
-      status !== PaymentStatus.PARTIALLY_REFUNDED
-    ) {
-      paidAt = null;
-    }
-
-    return this.prisma.payment.update({
-      where: {
-        id: payment.id,
-      },
-      data: {
-        ...(dto.status !== undefined && {
-          status,
-          paidAt,
-        }),
-        ...(dto.reference !== undefined && {
-          reference,
-        }),
-        ...(dto.externalReference !== undefined && {
-          externalReference,
-        }),
-        ...(dto.description !== undefined && {
-          description:
-            dto.description.trim() || null,
-        }),
-      },
-      include: {
-        member: true,
-        allocations: true,
-        receipt: true,
-        mpesaTransaction: true,
-      },
-    });
+  private isUniqueConstraintError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
+    );
   }
 
   async cancel(
     organizationId: string,
     id: string,
   ) {
-    const payment = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payment"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      payment.status === PaymentStatus.CANCELLED
-    ) {
-      return payment;
-    }
+      const payment = await tx.payment.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
+        },
+      });
 
-    if (
-      payment.status === PaymentStatus.REFUNDED
-    ) {
-      throw new BadRequestException(
-        'A refunded payment cannot be cancelled.',
-      );
-    }
+      if (!payment) {
+        throw new NotFoundException('Payment not found.');
+      }
 
-    if (payment.allocations.length > 0) {
-      throw new BadRequestException(
-        'A payment with allocations cannot be cancelled. Reverse the allocation through the appropriate financial workflow.',
-      );
-    }
+      if (payment.status === PaymentStatus.CANCELLED) {
+        return payment;
+      }
 
-    return this.prisma.payment.update({
-      where: {
-        id: payment.id,
-      },
-      data: {
-        status: PaymentStatus.CANCELLED,
-        paidAt: null,
-      },
+      if (payment.status === PaymentStatus.REFUNDED) {
+        throw new BadRequestException(
+          'A refunded payment cannot be cancelled.',
+        );
+      }
+
+      if (
+        payment.status === PaymentStatus.COMPLETED ||
+        payment.status === PaymentStatus.PARTIALLY_REFUNDED
+      ) {
+        throw new BadRequestException(
+          'A completed or partially refunded payment cannot be cancelled. Use the refund or adjustment workflow instead.',
+        );
+      }
+
+      if (payment.receipt?.status === 'ISSUED') {
+        throw new BadRequestException(
+          'A payment with an issued receipt cannot be cancelled. Void the receipt and use the refund or adjustment workflow instead.',
+        );
+      }
+
+      if (payment.allocations.length > 0) {
+        throw new BadRequestException(
+          'A payment with allocations cannot be cancelled. Reverse the allocation through the appropriate financial workflow.',
+        );
+      }
+
+      return tx.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          status: PaymentStatus.CANCELLED,
+          paidAt: null,
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
+        },
+      });
     });
   }
 
@@ -343,35 +380,68 @@ export class PaymentsService {
     organizationId: string,
     id: string,
   ) {
-    const payment = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payment"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      payment.status === PaymentStatus.COMPLETED
-    ) {
-      return payment;
-    }
+      const payment = await tx.payment.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
+        },
+      });
 
-    if (
-      payment.status === PaymentStatus.CANCELLED ||
-      payment.status === PaymentStatus.FAILED ||
-      payment.status === PaymentStatus.REFUNDED
-    ) {
-      throw new BadRequestException(
-        'This payment cannot be marked as completed from its current status.',
-      );
-    }
+      if (!payment) {
+        throw new NotFoundException('Payment not found.');
+      }
 
-    return this.prisma.payment.update({
-      where: {
-        id: payment.id,
-      },
-      data: {
-        status: PaymentStatus.COMPLETED,
-        paidAt: new Date(),
-      },
+      if (payment.status === PaymentStatus.COMPLETED) {
+        return payment;
+      }
+
+      if (payment.method === PaymentMethod.MPESA) {
+        throw new BadRequestException(
+          'M-Pesa payments can only be completed through a verified provider callback.',
+        );
+      }
+
+      if (
+        payment.status === PaymentStatus.CANCELLED ||
+        payment.status === PaymentStatus.FAILED ||
+        payment.status === PaymentStatus.REFUNDED ||
+        payment.status === PaymentStatus.PARTIALLY_REFUNDED
+      ) {
+        throw new BadRequestException(
+          'This payment cannot be marked as completed from its current status.',
+        );
+      }
+
+      return tx.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          status: PaymentStatus.COMPLETED,
+          paidAt: new Date(),
+        },
+        include: {
+          member: true,
+          allocations: true,
+          receipt: true,
+          mpesaTransaction: true,
+        },
+      });
     });
   }
 }

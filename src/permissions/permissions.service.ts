@@ -6,6 +6,24 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+const PROTECTED_CUSTOM_ROLE_PERMISSION_CODES = new Set([
+  'governance.assignments.create',
+  'governance.assignments.update',
+  'governance.assignments.activate',
+  'governance.assignments.end',
+  'governance.assignments.revoke',
+  'governance.positions.manage',
+  'governance.terms.manage',
+]);
+
+function isProtectedCustomRolePermission(code: string) {
+  return (
+    code.startsWith('users.') ||
+    code.startsWith('system.') ||
+    PROTECTED_CUSTOM_ROLE_PERMISSION_CODES.has(code)
+  );
+}
+
 @Injectable()
 export class PermissionsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -90,6 +108,14 @@ export class PermissionsService {
 
     if (!permission) {
       throw new NotFoundException('Permission not found.');
+    }
+
+    if (isProtectedCustomRolePermission(permission.code)) {
+      throw new ForbiddenException({
+        code: 'PROTECTED_PERMISSION_NOT_ALLOWED_FOR_CUSTOM_ROLE',
+        message:
+          'User access, system administration, and protected governance permissions can only be granted through protected system roles.',
+      });
     }
 
     const existing = await this.prisma.rolePermission.findUnique({

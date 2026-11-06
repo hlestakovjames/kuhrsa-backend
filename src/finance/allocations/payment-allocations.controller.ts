@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -58,7 +59,7 @@ export class PaymentAllocationsController {
     @Query('paymentId') paymentId?: string,
   ) {
     if (!paymentId) {
-      throw new Error(
+      throw new BadRequestException(
         'paymentId query parameter is required.',
       );
     }

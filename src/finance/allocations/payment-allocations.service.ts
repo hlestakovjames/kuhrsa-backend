@@ -109,6 +109,25 @@ export class PaymentAllocationsService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock both balance-bearing records before reading their current state.
+      // The fixed payment-then-charge order keeps competing allocation requests
+      // from observing the same available balance or taking locks inconsistently.
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payment"
+        WHERE "id" = ${paymentId}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
+
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "MemberCharge"
+        WHERE "id" = ${dto.chargeId}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
+
       const payment =
         await tx.payment.findFirst({
           where: {

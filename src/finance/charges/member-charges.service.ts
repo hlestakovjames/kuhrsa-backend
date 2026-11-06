@@ -127,45 +127,6 @@ export class MemberChargesService {
       );
     }
 
-    const member =
-      await this.prisma.member.findFirst({
-        where: {
-          id: dto.memberId,
-          organizationId,
-        },
-      });
-
-    if (!member) {
-      throw new NotFoundException(
-        'Member not found.',
-      );
-    }
-
-    const feeSchedule =
-      await this.prisma.feeSchedule.findFirst({
-        where: {
-          id: dto.feeScheduleId,
-          organizationId,
-        },
-      });
-
-    if (!feeSchedule) {
-      throw new NotFoundException(
-        'Fee schedule not found.',
-      );
-    }
-
-    if (
-      feeSchedule.status ===
-        FeeScheduleStatus.CANCELLED ||
-      feeSchedule.status ===
-        FeeScheduleStatus.EXPIRED
-    ) {
-      throw new BadRequestException(
-        'Cancelled or expired fee schedules cannot create member charges.',
-      );
-    }
-
     const dueDate = dto.dueDate
       ? new Date(dto.dueDate)
       : undefined;
@@ -179,8 +140,53 @@ export class MemberChargesService {
       );
     }
 
-    const existing =
-      await this.prisma.memberCharge.findFirst({
+    return this.prisma.$transaction(async (tx) => {
+      /*
+       * M-Pesa callbacks take the same member lock before reading
+       * outstanding charges. This serializes charge creation with
+       * automatic payment allocation and with other charge creation
+       * for the same member.
+       */
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Member"
+        WHERE "id" = ${dto.memberId}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
+
+      const member = await tx.member.findFirst({
+        where: {
+          id: dto.memberId,
+          organizationId,
+        },
+      });
+
+      if (!member) {
+        throw new NotFoundException('Member not found.');
+      }
+
+      const feeSchedule = await tx.feeSchedule.findFirst({
+        where: {
+          id: dto.feeScheduleId,
+          organizationId,
+        },
+      });
+
+      if (!feeSchedule) {
+        throw new NotFoundException('Fee schedule not found.');
+      }
+
+      if (
+        feeSchedule.status === FeeScheduleStatus.CANCELLED ||
+        feeSchedule.status === FeeScheduleStatus.EXPIRED
+      ) {
+        throw new BadRequestException(
+          'Cancelled or expired fee schedules cannot create member charges.',
+        );
+      }
+
+      const existing = await tx.memberCharge.findFirst({
         where: {
           organizationId,
           memberId: dto.memberId,
@@ -196,39 +202,36 @@ export class MemberChargesService {
         },
       });
 
-    if (existing) {
-      throw new ConflictException(
-        'A matching member charge already exists.',
-      );
-    }
+      if (existing) {
+        throw new ConflictException(
+          'A matching member charge already exists.',
+        );
+      }
 
-    return this.prisma.memberCharge.create({
-      data: {
-        organizationId,
-        memberId: dto.memberId,
-        feeScheduleId: dto.feeScheduleId,
-        description:
-          dto.description?.trim() || null,
-        amountDue: dto.amountDue,
-        amountPaid: 0,
-        balance: dto.amountDue,
-        currency:
-          dto.currency?.trim().toUpperCase() ||
-          feeSchedule.currency ||
-          'KES',
-        status: this.getChargeStatus(
-          dto.amountDue,
-          0,
-        ),
-        dueDate: dueDate ?? null,
-      },
-      include: {
-        feeSchedule: {
-          include: {
-            feeDefinition: true,
+      return tx.memberCharge.create({
+        data: {
+          organizationId,
+          memberId: dto.memberId,
+          feeScheduleId: dto.feeScheduleId,
+          description: dto.description?.trim() || null,
+          amountDue: dto.amountDue,
+          amountPaid: 0,
+          balance: dto.amountDue,
+          currency:
+            dto.currency?.trim().toUpperCase() ||
+            feeSchedule.currency ||
+            'KES',
+          status: this.getChargeStatus(dto.amountDue, 0),
+          dueDate: dueDate ?? null,
+        },
+        include: {
+          feeSchedule: {
+            include: {
+              feeDefinition: true,
+            },
           },
         },
-      },
+      });
     });
   }
 
@@ -237,85 +240,87 @@ export class MemberChargesService {
     id: string,
     dto: UpdateMemberChargeDto,
   ) {
-    const charge = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "MemberCharge"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      charge.status === ChargeStatus.WAIVED ||
-      charge.status === ChargeStatus.CANCELLED
-    ) {
-      throw new BadRequestException(
-        'Waived or cancelled charges cannot be modified.',
-      );
-    }
+      const charge = await tx.memberCharge.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+      });
 
-    const currentAmountDue =
-      Number(charge.amountDue);
-    const currentAmountPaid =
-      Number(charge.amountPaid);
+      if (!charge) {
+        throw new NotFoundException('Member charge not found.');
+      }
 
-    const amountDue =
-      dto.amountDue !== undefined
-        ? dto.amountDue
-        : currentAmountDue;
+      if (
+        charge.status === ChargeStatus.WAIVED ||
+        charge.status === ChargeStatus.CANCELLED
+      ) {
+        throw new BadRequestException(
+          'Waived or cancelled charges cannot be modified.',
+        );
+      }
 
-    if (amountDue < currentAmountPaid) {
-      throw new BadRequestException(
-        'Charge amount cannot be less than the amount already paid.',
-      );
-    }
+      const currentAmountDue = Number(charge.amountDue);
+      const currentAmountPaid = Number(charge.amountPaid);
+      const amountDue =
+        dto.amountDue !== undefined ? dto.amountDue : currentAmountDue;
 
-    const balance =
-      amountDue - currentAmountPaid;
+      if (amountDue < currentAmountPaid) {
+        throw new BadRequestException(
+          'Charge amount cannot be less than the amount already paid.',
+        );
+      }
 
-    const status = this.getChargeStatus(
-      amountDue,
-      currentAmountPaid,
-    );
+      const balance = amountDue - currentAmountPaid;
+      const status = this.getChargeStatus(amountDue, currentAmountPaid);
+      const dueDate =
+        dto.dueDate !== undefined
+          ? dto.dueDate
+            ? new Date(dto.dueDate)
+            : null
+          : charge.dueDate;
 
-    const dueDate =
-      dto.dueDate !== undefined
-        ? dto.dueDate
-          ? new Date(dto.dueDate)
-          : null
-        : charge.dueDate;
+      if (
+        dueDate instanceof Date &&
+        Number.isNaN(dueDate.getTime())
+      ) {
+        throw new BadRequestException('Invalid charge due date.');
+      }
 
-    if (
-      dueDate instanceof Date &&
-      Number.isNaN(dueDate.getTime())
-    ) {
-      throw new BadRequestException(
-        'Invalid charge due date.',
-      );
-    }
-
-    return this.prisma.memberCharge.update({
-      where: {
-        id: charge.id,
-      },
-      data: {
-        ...(dto.description !== undefined && {
-          description:
-            dto.description.trim() || null,
-        }),
-        ...(dto.amountDue !== undefined && {
-          amountDue,
-          balance,
-          status,
-        }),
-        ...(dto.dueDate !== undefined && {
-          dueDate,
-        }),
-      },
-      include: {
-        feeSchedule: {
-          include: {
-            feeDefinition: true,
+      return tx.memberCharge.update({
+        where: {
+          id: charge.id,
+        },
+        data: {
+          ...(dto.description !== undefined && {
+            description: dto.description.trim() || null,
+          }),
+          ...(dto.amountDue !== undefined && {
+            amountDue,
+            balance,
+            status,
+          }),
+          ...(dto.dueDate !== undefined && {
+            dueDate,
+          }),
+        },
+        include: {
+          feeSchedule: {
+            include: {
+              feeDefinition: true,
+            },
           },
         },
-      },
+      });
     });
   }
 
@@ -325,54 +330,61 @@ export class MemberChargesService {
     dto: WaiveMemberChargeDto,
     waivedBy: string,
   ) {
-    const charge = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "MemberCharge"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      charge.status === ChargeStatus.PAID
-    ) {
-      throw new BadRequestException(
-        'A fully paid charge cannot be waived.',
-      );
-    }
+      const charge = await tx.memberCharge.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+      });
 
-    if (
-      charge.status === ChargeStatus.CANCELLED
-    ) {
-      throw new BadRequestException(
-        'A cancelled charge cannot be waived.',
-      );
-    }
+      if (!charge) {
+        throw new NotFoundException('Member charge not found.');
+      }
 
-    if (
-      charge.status === ChargeStatus.WAIVED
-    ) {
-      return charge;
-    }
+      if (charge.status === ChargeStatus.PAID) {
+        throw new BadRequestException(
+          'A fully paid charge cannot be waived.',
+        );
+      }
 
-    const amountPaid =
-      Number(charge.amountPaid);
+      if (charge.status === ChargeStatus.CANCELLED) {
+        throw new BadRequestException(
+          'A cancelled charge cannot be waived.',
+        );
+      }
 
-    if (amountPaid > 0) {
-      throw new BadRequestException(
-        'A partially paid charge cannot be waived. Adjustments must be handled through the payment and adjustment workflow.',
-      );
-    }
+      if (charge.status === ChargeStatus.WAIVED) {
+        return charge;
+      }
 
-    return this.prisma.memberCharge.update({
-      where: {
-        id: charge.id,
-      },
-      data: {
-        amountPaid: 0,
-        balance: 0,
-        status: ChargeStatus.WAIVED,
-        waivedAt: new Date(),
-        waivedBy,
-        waiverReason: dto.reason.trim(),
-      },
+      if (Number(charge.amountPaid) > 0) {
+        throw new BadRequestException(
+          'A partially paid charge cannot be waived. Adjustments must be handled through the payment and adjustment workflow.',
+        );
+      }
+
+      return tx.memberCharge.update({
+        where: {
+          id: charge.id,
+        },
+        data: {
+          amountPaid: 0,
+          balance: 0,
+          status: ChargeStatus.WAIVED,
+          waivedAt: new Date(),
+          waivedBy,
+          waiverReason: dto.reason.trim(),
+        },
+      });
     });
   }
 
@@ -380,46 +392,56 @@ export class MemberChargesService {
     organizationId: string,
     id: string,
   ) {
-    const charge = await this.findOne(
-      organizationId,
-      id,
-    );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "MemberCharge"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
 
-    if (
-      charge.status === ChargeStatus.PAID
-    ) {
-      throw new BadRequestException(
-        'A fully paid charge cannot be cancelled.',
-      );
-    }
+      const charge = await tx.memberCharge.findFirst({
+        where: {
+          id,
+          organizationId,
+        },
+      });
 
-    if (
-      charge.status === ChargeStatus.WAIVED
-    ) {
-      throw new BadRequestException(
-        'A waived charge cannot be cancelled.',
-      );
-    }
+      if (!charge) {
+        throw new NotFoundException('Member charge not found.');
+      }
 
-    if (
-      charge.status === ChargeStatus.CANCELLED
-    ) {
-      return charge;
-    }
+      if (charge.status === ChargeStatus.PAID) {
+        throw new BadRequestException(
+          'A fully paid charge cannot be cancelled.',
+        );
+      }
 
-    if (Number(charge.amountPaid) > 0) {
-      throw new BadRequestException(
-        'A charge with payments cannot be cancelled. Use the adjustment or refund workflow instead.',
-      );
-    }
+      if (charge.status === ChargeStatus.WAIVED) {
+        throw new BadRequestException(
+          'A waived charge cannot be cancelled.',
+        );
+      }
 
-    return this.prisma.memberCharge.update({
-      where: {
-        id: charge.id,
-      },
-      data: {
-        status: ChargeStatus.CANCELLED,
-      },
+      if (charge.status === ChargeStatus.CANCELLED) {
+        return charge;
+      }
+
+      if (Number(charge.amountPaid) > 0) {
+        throw new BadRequestException(
+          'A charge with payments cannot be cancelled. Use the adjustment or refund workflow instead.',
+        );
+      }
+
+      return tx.memberCharge.update({
+        where: {
+          id: charge.id,
+        },
+        data: {
+          status: ChargeStatus.CANCELLED,
+        },
+      });
     });
   }
 
@@ -429,6 +451,14 @@ export class MemberChargesService {
   ) {
     return this.prisma.$transaction(
       async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "MemberCharge"
+        WHERE "id" = ${id}
+          AND "organizationId" = ${organizationId}
+        FOR UPDATE
+      `;
+
         const charge =
           await tx.memberCharge.findFirst({
             where: {

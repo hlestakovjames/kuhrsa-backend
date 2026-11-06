@@ -132,12 +132,29 @@ export class MpesaPaymentService {
           },
         });
 
-      await this.prisma.payment.update({
+      /*
+       * The provider callback may complete the payment before this
+       * request resumes. Only move the initial PENDING state forward;
+       * never overwrite a state written by the callback.
+       */
+      await this.prisma.payment.updateMany({
         where: {
           id: payment.id,
+          organizationId,
+          status: PaymentStatus.PENDING,
         },
         data: {
           status: PaymentStatus.PROCESSING,
+        },
+      });
+
+      const currentPayment = await this.prisma.payment.findFirst({
+        where: {
+          id: payment.id,
+          organizationId,
+        },
+        select: {
+          status: true,
         },
       });
 
@@ -148,7 +165,7 @@ export class MpesaPaymentService {
           amount: Number(payment.amount),
           currency: payment.currency,
           method: payment.method,
-          status: PaymentStatus.PROCESSING,
+          status: currentPayment?.status ?? PaymentStatus.PROCESSING,
         },
         mpesa: {
           merchantRequestId:
@@ -163,9 +180,13 @@ export class MpesaPaymentService {
         },
       };
     } catch (error) {
-      await this.prisma.payment.update({
+      await this.prisma.payment.updateMany({
         where: {
           id: payment.id,
+          organizationId,
+          status: {
+            in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING],
+          },
         },
         data: {
           status: PaymentStatus.FAILED,

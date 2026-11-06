@@ -568,18 +568,34 @@ async function main() {
     // System — ordinary administrators do not receive
     // Super Administrator management capabilities.
     'system.configuration.view',
-    'system.configuration.manage',
     'system.security.view',
-    'system.security.manage',
     'system.database.view',
-    'system.database.manage',
     'system.maintenance.view',
-    'system.maintenance.manage',
     'system.audit.view',
     'system.settings.view',
-    'system.settings.manage',
     'system.health.view',
   ];
+
+  // Remove legacy system-administration grants from the Administrator role.
+  // These capabilities are reserved for the Super Administrator role.
+  const restrictedAdministratorPermissionCodes = [
+    'system.configuration.manage',
+    'system.security.manage',
+    'system.database.manage',
+    'system.maintenance.manage',
+    'system.settings.manage',
+  ];
+
+  await prisma.rolePermission.deleteMany({
+    where: {
+      roleId: administrator.id,
+      permission: {
+        code: {
+          in: restrictedAdministratorPermissionCodes,
+        },
+      },
+    },
+  });
 
   for (const code of administratorPermissions) {
     const permission = permissionRecords.get(code);
