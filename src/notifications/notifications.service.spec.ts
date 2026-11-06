@@ -17,6 +17,7 @@ describe('NotificationsService member access', () => {
       count: jest.Mock;
       updateMany: jest.Mock;
       findFirst: jest.Mock;
+      create: jest.Mock;
     };
     member: {
       findFirst: jest.Mock;
@@ -30,13 +31,65 @@ describe('NotificationsService member access', () => {
         count: jest.fn().mockResolvedValue(0),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(async ({ data }) => ({ id: 'notification-1', ...data })),
       },
       member: {
-        findFirst: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({
+          id: memberId,
+          memberNumber: 'KUHRSA-001',
+          category: 'STUDENT',
+          email: 'member@example.com',
+          phone: '254712345678',
+          registrationNumber: null,
+          nationalId: null,
+          staffNumber: null,
+          organizationId,
+          source: 'MANUAL_ENTRY',
+          user: { id: userId, firstName: 'Test', lastName: 'Member' },
+        }),
       },
     };
 
     service = new NotificationsService(prisma as any, {} as any);
+  });
+
+  it('creates an in-app account activation notification for the linked member', async () => {
+    const result = await service.notifyMemberAccountActivated(memberId, organizationId);
+
+    expect(prisma.member.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: memberId, organizationId },
+      }),
+    );
+    expect(prisma.notification.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId,
+        memberId,
+        userId,
+        type: NotificationType.ACCOUNT_ACTIVATED,
+        channel: NotificationChannel.IN_APP,
+        status: 'SENT',
+        subject: 'Your KUHRSA account has been activated successfully.',
+        sentAt: expect.any(Date),
+      }),
+    });
+    expect(result.id).toBe('notification-1');
+  });
+
+  it('creates an in-app payment confirmation with the confirmed amount', async () => {
+    await service.notifyMemberPaymentConfirmed(memberId, organizationId, '250', 'KES');
+
+    expect(prisma.notification.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId,
+        memberId,
+        userId,
+        type: NotificationType.PAYMENT_CONFIRMATION,
+        channel: NotificationChannel.IN_APP,
+        status: 'SENT',
+        subject: 'Payment received: KES 250.00.',
+      }),
+    });
   });
 
   it('lists only in-app notifications owned by the authenticated user or linked member', async () => {
