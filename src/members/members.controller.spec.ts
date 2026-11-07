@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MembersController } from './members.controller';
 import { MembersService } from './members.service';
+import { MemberDirectoryService } from './member-directory.service';
 
 describe('MembersController', () => {
   let controller: MembersController;
@@ -12,6 +13,12 @@ describe('MembersController', () => {
         {
           provide: MembersService,
           useValue: {},
+        },
+        {
+          provide: MemberDirectoryService,
+          useValue: {
+            findAll: jest.fn(),
+          },
         },
       ],
     }).compile();

@@ -283,6 +283,7 @@ async function main() {
   const administratorPermissions = [
     // Membership
     'membership.members.view',
+    'membership.members.view_sensitive',
     'membership.members.create',
     'membership.members.update',
     'membership.pending.view',

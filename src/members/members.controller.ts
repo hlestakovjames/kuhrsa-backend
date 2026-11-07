@@ -20,22 +20,26 @@ import { CreateMemberDto } from './dto/create-member.dto';
 import { LinkMemberAccountDto } from './dto/link-member-account.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MembersService } from './members.service';
+import { MemberDirectoryService } from './member-directory.service';
 
 @Controller('members')
 @UseGuards(AuthGuard('jwt'))
 export class MembersController {
-  constructor(private readonly membersService: MembersService) {}
+  constructor(
+    private readonly membersService: MembersService,
+    private readonly memberDirectoryService: MemberDirectoryService,
+  ) {}
 
   @Get()
   @UseGuards(PermissionsGuard)
   @Permissions('membership.members.view')
   async findAll(@Request() req: AuthenticatedRequest) {
-    return this.membersService.findAll(req.user.organizationId);
+    return this.memberDirectoryService.findAll(req.user.organizationId);
   }
 
   @Get(':id')
   @UseGuards(PermissionsGuard)
-  @Permissions('membership.members.view')
+  @Permissions('membership.members.view_sensitive')
   async findOne(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
